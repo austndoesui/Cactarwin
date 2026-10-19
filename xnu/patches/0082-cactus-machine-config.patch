@@ -13,7 +13,7 @@ index f2d8bf8..ee7a991 100644
  sweet_pthread_init.o_INCFLAGS = $(SWEET_PTHREAD_INC)
 diff --git a/config/MASTER.arm64.cactus b/config/MASTER.arm64.cactus
 new file mode 100644
-index 0000000..6a38f36
+index 0000000..2953f05
 --- /dev/null
 +++ b/config/MASTER.arm64.cactus
 @@ -0,0 +1,115 @@
@@ -31,14 +31,14 @@ index 0000000..6a38f36
 +#
 +# All rights reserved.  The CMU software License Agreement
 +# specifies the terms and conditions for use and redistribution.
-+#  
++#
 +######################################################################
 +#
 +#  Master Apple configuration file (see the master machine independent
 +#  configuration file for a description of the file format).
 +#
 +######################################################################
-+#  
++#
 +#  Standard Apple OS Configurations:
 +#  -------- ----- -- ---------------
 +#
@@ -128,7 +128,7 @@ index 0000000..6a38f36
 +
 +options CONFIG_MACF_LAZY_VNODE_LABELS   # Turn on labels, don't preallocate
 +
-+options CONFIG_HYPERVISOR_PUBLIC   # unrestricted entitlement for hypervisor
++options CONFIG_HYPERVISOR_PUBLIC   # unrestricted entitlement for hyperviso
 +
 +options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
 +options   CONFIG_KERNEL_TBI		# <kernel_tbi>
@@ -216,6 +216,29 @@ index 9a748ea..de92570 100644
  export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
  endif
  endif
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 00568d3..f7c9331 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -10980,12 +10980,17 @@ static_assert((_COMM_PAGE32_BASE_ADDRESS & ~ARM_TT_L2_OFFMASK) >= VM_MAX_ADDRESS
+  * a reserved region (see vm_reserved_regions[] definition for more info).
+  */
+ 
+-#elif (ARM_PGSHIFT == 12)
++#elif (ARM_PGSHIFT == 12) && !defined(ARM64_BOARD_CONFIG_CACTUS)
+ /**
+  * Ensure that 64-bit devices using 4K pages can nest the commpage completely
+  * above the maximum userspace VA.
+  */
+ static_assert((_COMM_PAGE64_BASE_ADDRESS & ~ARM_TT_L1_OFFMASK) >= MACH_VM_MAX_ADDRESS);
++#elif (ARM_PGSHIFT == 12)
++/**
++ * CACTUS uses 4K pages on a macOS-platform build, where the commpage lives
++ * inside the userspace VA range and is protected as a reserved region.
++ */
+ #else
+ #error Nested shared page mapping is unsupported on this config
+ #endif
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 index 06bb568..268562d 100644
 --- a/osfmk/arm64/arm_vm_init.c
@@ -301,7 +324,7 @@ index 6928957..735e0fc 100644
  #define EARLY_CELL_H (16u * EARLY_SCALE)
 diff --git a/pexpert/pexpert/arm64/CACTUS.h b/pexpert/pexpert/arm64/CACTUS.h
 new file mode 100644
-index 0000000..4f8765c
+index 0000000..481ea93
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/CACTUS.h
 @@ -0,0 +1,90 @@
@@ -331,7 +354,7 @@ index 0000000..4f8765c
 +/* Live MediaTek framebuffer (LK atag,videolfb), 720x1440. The bootstrap
 + * mapping uses the 32MB-aligned block that contains it. */
 +#define CACTUS_FB_BASE            0x5e605000
-+#define CACTUS_FB_PA_BLOCK        0x5e000000ULL
++#define CACTUS_FB_PA_BLOCK        0x5e000000
 +#define CACTUS_FB_WIDTH           720
 +#define CACTUS_FB_HEIGHT          1440
 +#define CACTUS_FB_STRIDE          2880
@@ -357,7 +380,7 @@ index 0000000..4f8765c
 +#endif /* ! ASSEMBLER */
 +
 +/*
-+ * MediaTek uses the standard ARM GIC PPI numbering: the virtual timer
++ * MediaTek uses the standard ARM GIC PPI numbering: the virtual time
 + * (CNTV) is INTID 16 + 11 = 27.
 + */
 +#define CACTUS_VTIMER_INTID       27
