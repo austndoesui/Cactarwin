@@ -231,33 +231,89 @@ index 9a748ea..1fb8232 100644
  
  CFLAGS_ARM64	= -Darm64 -DARM64 -D__ARM64__ -DLP64 -DPAGE_SIZE_FIXED -DVM_KERNEL_LINK_ADDRESS=$(ARM64_LINK_ADDR) \
  			$(LARGE_MEMORY_DEFINE) -momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4 -mkernel
+diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
+index 75f3db0..7aaf366 100644
+--- a/osfmk/arm/pmap/pmap.h
++++ b/osfmk/arm/pmap/pmap.h
+@@ -112,7 +112,12 @@
+  */
+ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+ #else /* defined(ARM_LARGE_MEMORY) */
++#if defined(ARM64_BOARD_CONFIG_CACTUS)
++/* V=P and KVA mappings plus one extra L2 table for the framebuffer alias. */
++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 10)
++#else
+ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
++#endif /* defined(ARM64_BOARD_CONFIG_CACTUS) */
+ #endif /* defined(ARM_LARGE_MEMORY) */
+ 
+ typedef uint64_t tt_entry_t; /* translation table entry type */
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
-index 06bb568..268562d 100644
+index 06bb568..5bf19a5 100644
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -1832,6 +1832,11 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool
-  * for a Normal-NC framebuffer alias that survives bootstrap TTBR0 teardown.
+@@ -1828,25 +1828,48 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool
+ #if defined(SWEET)
+ /*
+  * The reserved low-globals/kernel region is excluded from VM allocation.
+- * Use the otherwise empty 32MB block above low globals and below gVirtBase
+- * for a Normal-NC framebuffer alias that survives bootstrap TTBR0 teardown.
++ * Map the framebuffer at an otherwise empty VA below gVirtBase so it survives
++ * bootstrap TTBR0 teardown. SWEET uses one 32MB block; CACTUS needs two 2MB
++ * blocks because its 4K KVA layout places the alias in a different L1 entry.
   */
  #define SWEET_EARLY_FB_VA (VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE)
 +#if defined(CACTUS)
-+#define SWEET_EARLY_FB_PA CACTUS_FB_PA_BLOCK
++#define SWEET_EARLY_FB_PA CACTUS_FB_ALIAS_PA
++#define SWEET_EARLY_FB_BLOCKS 2
 +#else
 +#define SWEET_EARLY_FB_PA 0x9c000000ULL
++#define SWEET_EARLY_FB_BLOCKS 1
 +#endif
  
  static void
  sweet_early_map_final(void)
-@@ -1843,7 +1848,7 @@ sweet_early_map_final(void)
+ {
+ 	const vm_map_address_t va = SWEET_EARLY_FB_VA;
+-	assert(va + ARM_TT_L2_SIZE <= gVirtBase);
+-	tt_entry_t l1 = cpu_tte[(va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT];
+-	assert((l1 & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) == (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE));
++	unsigned int i;
++	assert(va + SWEET_EARLY_FB_BLOCKS * ARM_TT_L2_SIZE <= gVirtBase);
++	tt_entry_t *l1_slot = &cpu_tte[(va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT];
++	if ((*l1_slot & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) !=
++	    (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE)) {
++		tt_entry_t *new_l2;
++		assert(*l1_slot == ARM_TTE_EMPTY);
++		new_l2 = (tt_entry_t *)alloc_ptpage(TRUE);
++		bzero(new_l2, ARM_PGBYTES);
++		*l1_slot = (kvtophys((vm_offset_t)new_l2) & ARM_TTE_TABLE_MASK) |
++		    ARM_TTE_TYPE_TABLE | ARM_TTE_VALID | ARM_DYNAMIC_TABLE_XN |
++		    ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA);
++	}
++	tt_entry_t l1 = *l1_slot;
  	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
- 	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
- 	assert(*slot == ARM_TTE_EMPTY);
+-	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
+-	assert(*slot == ARM_TTE_EMPTY);
 -	*slot = 0x9c000000ULL | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
-+	*slot = SWEET_EARLY_FB_PA | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
- 	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
- 	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
- 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
+-	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+-	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
+-	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
++	for (i = 0; i < SWEET_EARLY_FB_BLOCKS; i++) {
++		vm_map_address_t block_va = va + i * ARM_TT_L2_SIZE;
++		tt_entry_t *slot = &l2[(block_va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
++		assert(*slot == ARM_TTE_EMPTY);
++		*slot = (SWEET_EARLY_FB_PA + i * ARM_TT_L2_SIZE) |
++		    ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
++		    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
++		    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
++		    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
++	}
+ 	__asm__ volatile("dsb ishst" ::: "memory");
+ }
+ #endif
 diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-index 023086f..f9c609b 100644
+index 023086f..8109eaa 100644
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
 @@ -515,10 +515,17 @@ LEXT(start_first_cpu)
@@ -278,28 +334,55 @@ index 023086f..f9c609b 100644
  Lsweet_mark_row:
  	mov		x3, #64
  	mov		x5, x0
-@@ -686,7 +693,11 @@ Lkernelcache_base_found:
- 	 * SWEET uses 16K pages and all bring-up RAM is below 4GB, so the first
- 	 * V=P L2 page is bootstrap_pagetables + 2*PGBYTES.
- 	 */
-+#if defined(CACTUS)
-+	MOV64	x10, 0x5e000000
-+#else
- 	MOV64	x10, 0x9c000000
+@@ -678,7 +685,7 @@ Lkernelcache_base_found:
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
+-#if defined(SWEET)
++#if defined(SWEET) && !defined(CACTUS)
+ 	/*
+ 	 * Splash framebuffer: one 32MB Normal-NC block in the EXISTING V=P
+ 	 * L2 table. Both framebuffer and RAM use L1 index 0; another call to
+@@ -695,6 +702,28 @@ Lkernelcache_base_found:
+ 	str		x11, [x13, x12, lsl #TTE_SHIFT]
+ #endif
+ 
++#if defined(SWEET) && defined(CACTUS)
++	/*
++	 * CACTUS has 4K pages, so the framebuffer is four 2MB blocks away from
++	 * the kernel's V=P start and cannot share a free L1 entry with it.
++	 * Map the two blocks containing the console text and status rows at
++	 * CACTUS_FB_ALIAS_VA in the KVA table used by TTBR1 after MMU enable.
++	 */
++	MOV64	x0, CACTUS_FB_ALIAS_VA
++	MOV64	x1, CACTUS_FB_ALIAS_PA
++	add		x2, x2, PGBYTES
++	create_l1_table_entry x0, x3, x2, x6, x7, x8
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	orr		x11, x11, x1
++	and		x12, x0, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
++	str		x11, [x2, x12, lsl #TTE_SHIFT]
++	MOV64	x13, (ARM_TT_L2_SIZE)
++	add		x11, x11, x13
++	add		x12, x12, #1
++	str		x11, [x2, x12, lsl #TTE_SHIFT]
 +#endif
- 	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
- 	orr		x11, x11, x10
- 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
++
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..735e0fc 100644
+index 6928957..e45501d 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -11,11 +11,18 @@
+@@ -11,11 +11,19 @@
  #include <stdint.h>
  #include <kern/misc_protos.h>
  
 +#if defined(CACTUS)
-+static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)CACTUS_FB_BASE;
++static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)
++    (CACTUS_FB_ALIAS_VA + CACTUS_FB_ALIAS_OFFSET);
 +#define EARLY_WIDTH CACTUS_FB_WIDTH
 +#define EARLY_HEIGHT CACTUS_FB_HEIGHT
 +#define EARLY_STRIDE (CACTUS_FB_STRIDE / 4)
@@ -314,6 +397,16 @@ index 6928957..735e0fc 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
+@@ -129,6 +137,9 @@ void
+ sweet_early_relocate(uint64_t base)
+ {
+ 	sweet_early_mark(8, "leaving bootstrap TTBR0");
++#if defined(CACTUS)
++	base += CACTUS_FB_ALIAS_OFFSET;
++#endif
+ 	early_fb = (volatile uint32_t *)(uintptr_t)base;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	sweet_early_mark(9, "kernel framebuffer VA live");
 diff --git a/osfmk/mach/arm/vm_param.h b/osfmk/mach/arm/vm_param.h
 index c013288..a39c79c 100644
 --- a/osfmk/mach/arm/vm_param.h
@@ -332,10 +425,10 @@ index c013288..a39c79c 100644
  #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
 diff --git a/pexpert/pexpert/arm64/CACTUS.h b/pexpert/pexpert/arm64/CACTUS.h
 new file mode 100644
-index 0000000..481ea93
+index 0000000..c6f38ba
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/CACTUS.h
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,93 @@
 +/*
 + * Board config for the Redmi 6A ("cactus", MediaTek MT6765 / Helio P22):
 + * eight Cortex-A53 cores, ARMv8.0, no pointer authentication, no PAN.
@@ -359,10 +452,13 @@ index 0000000..481ea93
 +
 +#define CACTUS                    1
 +
-+/* Live MediaTek framebuffer (LK atag,videolfb), 720x1440. The bootstrap
-+ * mapping uses the 32MB-aligned block that contains it. */
++/* Live MediaTek framebuffer (LK atag,videolfb), 720x1440. start.s maps the
++ * 4MB around it at a reserved KVA alias; the console uses that from the
++ * first post-MMU mark until it is replaced by the final Normal-NC mapping. */
 +#define CACTUS_FB_BASE            0x5e605000
-+#define CACTUS_FB_PA_BLOCK        0x5e000000
++#define CACTUS_FB_ALIAS_VA        0xffffffe000200000
++#define CACTUS_FB_ALIAS_PA        0x5e600000
++#define CACTUS_FB_ALIAS_OFFSET    (CACTUS_FB_BASE - CACTUS_FB_ALIAS_PA)
 +#define CACTUS_FB_WIDTH           720
 +#define CACTUS_FB_HEIGHT          1440
 +#define CACTUS_FB_STRIDE          2880
