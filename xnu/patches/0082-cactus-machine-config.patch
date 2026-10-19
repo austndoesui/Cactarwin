@@ -185,7 +185,7 @@ index aca295c..d52c9a3 100644
  SWEET_AES_INC = -I$(SWEET_AES_ROOT)/inc -I$(SWEET_AES_ROOT)/src
  sweet_aes.o_INCFLAGS = $(SWEET_AES_INC)
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index 9a748ea..1fb8232 100644
+index 9a748ea..030106e 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
 @@ -29,7 +29,7 @@ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
@@ -216,7 +216,7 @@ index 9a748ea..1fb8232 100644
  export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
  endif
  endif
-@@ -337,6 +338,14 @@ ARM64_PLKSEG_ADDR  =0xfffffe0004004000
+@@ -337,10 +338,24 @@ ARM64_PLKSEG_ADDR  =0xfffffe0004004000
  ARM64_LINK_ADDR    =0xfffffe0007004000
  endif
  
@@ -231,6 +231,16 @@ index 9a748ea..1fb8232 100644
  
  CFLAGS_ARM64	= -Darm64 -DARM64 -D__ARM64__ -DLP64 -DPAGE_SIZE_FIXED -DVM_KERNEL_LINK_ADDRESS=$(ARM64_LINK_ADDR) \
  			$(LARGE_MEMORY_DEFINE) -momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4 -mkernel
+ 
++# The Cortex-A53 has no LSE atomics. -arch arm64 selects a newer default CPU,
++# so -march=armv8-a alone does not prevent clang from emitting LDADD/CAS.
++ifneq ($(filter $(CURRENT_MACHINE_CONFIG),CACTUS),)
++CFLAGS_ARM64 += -mcpu=cortex-a53
++endif
++
+ CFLAGS_RELEASEX86_64 = -O2
+ CFLAGS_DEVELOPMENTX86_64 = -O2
+ CFLAGS_KASANX86_64 = $(CFLAGS_DEVELOPMENTX86_64)
 diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
 index 75f3db0..7aaf366 100644
 --- a/osfmk/arm/pmap/pmap.h
