@@ -185,7 +185,7 @@ index aca295c..d52c9a3 100644
  SWEET_AES_INC = -I$(SWEET_AES_ROOT)/inc -I$(SWEET_AES_ROOT)/src
  sweet_aes.o_INCFLAGS = $(SWEET_AES_INC)
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
-index 9a748ea..de92570 100644
+index 9a748ea..1fb8232 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
 @@ -29,7 +29,7 @@ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
@@ -216,29 +216,21 @@ index 9a748ea..de92570 100644
  export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
  endif
  endif
-diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
-index 00568d3..f7c9331 100644
---- a/osfmk/arm/pmap/pmap.c
-+++ b/osfmk/arm/pmap/pmap.c
-@@ -10980,12 +10980,17 @@ static_assert((_COMM_PAGE32_BASE_ADDRESS & ~ARM_TT_L2_OFFMASK) >= VM_MAX_ADDRESS
-  * a reserved region (see vm_reserved_regions[] definition for more info).
-  */
+@@ -337,6 +338,14 @@ ARM64_PLKSEG_ADDR  =0xfffffe0004004000
+ ARM64_LINK_ADDR    =0xfffffe0007004000
+ endif
  
--#elif (ARM_PGSHIFT == 12)
-+#elif (ARM_PGSHIFT == 12) && !defined(ARM64_BOARD_CONFIG_CACTUS)
- /**
-  * Ensure that 64-bit devices using 4K pages can nest the commpage completely
-  * above the maximum userspace VA.
-  */
- static_assert((_COMM_PAGE64_BASE_ADDRESS & ~ARM_TT_L1_OFFMASK) >= MACH_VM_MAX_ADDRESS);
-+#elif (ARM_PGSHIFT == 12)
-+/**
-+ * CACTUS uses 4K pages on a macOS-platform build, where the commpage lives
-+ * inside the userspace VA range and is protected as a reserved region.
-+ */
- #else
- #error Nested shared page mapping is unsupported on this config
- #endif
++# CACTUS uses 4K pages, so T1SZ_BOOT only covers a 39-bit kernel VA. Its
++# MacOSX-platform build must therefore use the iOS-style low KVA layout.
++ifneq ($(filter $(CURRENT_MACHINE_CONFIG),CACTUS),)
++LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY
++ARM64_PLKSEG_ADDR  =0xfffffff004004000
++ARM64_LINK_ADDR    =0xfffffff007004000
++endif
++
+ 
+ CFLAGS_ARM64	= -Darm64 -DARM64 -D__ARM64__ -DLP64 -DPAGE_SIZE_FIXED -DVM_KERNEL_LINK_ADDRESS=$(ARM64_LINK_ADDR) \
+ 			$(LARGE_MEMORY_DEFINE) -momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4 -mkernel
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 index 06bb568..268562d 100644
 --- a/osfmk/arm64/arm_vm_init.c
@@ -322,6 +314,22 @@ index 6928957..735e0fc 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
+diff --git a/osfmk/mach/arm/vm_param.h b/osfmk/mach/arm/vm_param.h
+index c013288..a39c79c 100644
+--- a/osfmk/mach/arm/vm_param.h
++++ b/osfmk/mach/arm/vm_param.h
+@@ -133,7 +133,10 @@ extern int PAGE_SHIFT_CONST;
+ 
+ /* system-wide values */
+ #define MACH_VM_MIN_ADDRESS_RAW 0x0ULL
+-#if defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
++#if defined(ARM64_BOARD_CONFIG_CACTUS)
++/* 4K pages give CACTUS a 39-bit VA, matching the embedded layout. */
++#define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
++#elif defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
+ #define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
+ #else
+ #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
 diff --git a/pexpert/pexpert/arm64/CACTUS.h b/pexpert/pexpert/arm64/CACTUS.h
 new file mode 100644
 index 0000000..481ea93
