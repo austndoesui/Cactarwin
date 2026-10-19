@@ -24,6 +24,7 @@ import argparse, json, os, socket, struct, subprocess, sys, time, zlib
 
 FB_BASE, FB_W, FB_H = 0x9c000000, 1080, 2400
 FB_STRIDE = FB_W * 4
+CACTUS_FB_BASE, CACTUS_FB_W, CACTUS_FB_H = 0x5e605000, 720, 1440
 PAGE = 0x4000
 STUB_PA = 0x40200000	# above the dtb QEMU places at RAM base
 BOOT_LINE_LENGTH = 608
@@ -152,10 +153,19 @@ def main():
     ap.add_argument('--secs', type=float, default=20)
     ap.add_argument('--gdb', action='store_true', help='start halted, gdb stub on :1234, no timeout')
     ap.add_argument('--hmp', action='append', default=[], help='extra monitor command run after stop (repeatable), e.g. "x /8gx 0xfffffe..."')
-    ap.add_argument('--cpu', default='cortex-a76')	# ARMv8.2 like Kryo 470, same ID_AA64MMFR0
+    ap.add_argument('--cpu', default=None)	# default: cortex-a76 (sweet) or cortex-a53 (--cactus)
+    ap.add_argument('--cactus', action='store_true', help='Redmi 6A: 720x1440 framebuffer and cortex-a53 defaults')
     ap.add_argument('--kernel', help='matching unstripped kernel, for exact framebuffer text decoding (uses llvm-nm)')
     ap.add_argument('--fail-on-panic', action='store_true', help='exit 2 for a visible panic, 3 for incomplete/blank decoding; requires --kernel')
     a = ap.parse_args()
+    global FB_BASE, FB_W, FB_H, FB_STRIDE
+    if a.cactus:
+        FB_BASE, FB_W, FB_H = CACTUS_FB_BASE, CACTUS_FB_W, CACTUS_FB_H
+        FB_STRIDE = FB_W * 4
+        if a.cpu is None:
+            a.cpu = 'cortex-a53'
+    elif a.cpu is None:
+        a.cpu = 'cortex-a76'
     if a.fail_on_panic and not a.kernel:
         ap.error('--fail-on-panic requires --kernel')
     payload = open(a.payload, 'rb').read()
