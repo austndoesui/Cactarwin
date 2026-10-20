@@ -499,6 +499,27 @@ index 6928957..e45501d 100644
  	early_fb = (volatile uint32_t *)(uintptr_t)base;
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
+diff --git a/osfmk/kern/zalloc.c b/osfmk/kern/zalloc.c
+index 182b44a..367ba1c 100644
+--- a/osfmk/kern/zalloc.c
++++ b/osfmk/kern/zalloc.c
+@@ -160,13 +160,13 @@ ZONE_DEFINE_TYPE(percpu_u64_zone, "percpu.64", uint64_t,
+ #define ZONE_GUARD_SPARSE       (64  * 1024)
+ #endif /* ZSECURITY_CONFIG(SAD_FENG_SHUI) */
+ 
+-#if XNU_PLATFORM_MacOSX
++#if XNU_PLATFORM_MacOSX && !defined(ARM64_BOARD_CONFIG_CACTUS)
+ #define ZONE_MAP_MAX            (32ULL << 30)
+ #define ZONE_MAP_VA_SIZE        (128ULL << 30)
+-#else /* XNU_PLATFORM_MacOSX */
++#else /* XNU_PLATFORM_MacOSX && !ARM64_BOARD_CONFIG_CACTUS */
+ #define ZONE_MAP_MAX            (8ULL << 30)
+ #define ZONE_MAP_VA_SIZE        (24ULL << 30)
+-#endif /* !XNU_PLATFORM_MacOSX */
++#endif /* !XNU_PLATFORM_MacOSX || ARM64_BOARD_CONFIG_CACTUS */
+ 
+ __enum_closed_decl(zm_len_t, uint16_t, {
+ 	ZM_CHUNK_FREE           = 0x0,
 diff --git a/osfmk/mach/arm/vm_param.h b/osfmk/mach/arm/vm_param.h
 index c013288..a39c79c 100644
 --- a/osfmk/mach/arm/vm_param.h
