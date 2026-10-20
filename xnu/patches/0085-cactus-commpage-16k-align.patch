@@ -1,0 +1,35 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -10800,6 +10800,16 @@
+ {
+ 	tt_entry_t *ptep, pte;
+ 
++#if TEST_PAGE_RATIO_4
++	/*
++	 * CACTUS maps 16K VM pages with 4K hardware pages. The commpage text
++	 * address is randomized at 4K granularity, but write_pte_fast() writes
++	 * a full 16K PTE group. Keep the template write on the same group as
++	 * the mapping installed by pmap_enter_addr().
++	 */
++	address &= ~(vm_address_t)PAGE_MASK;
++#endif
++
+ 	ptep = pmap_tt3e(pmap, address);
+ 	if (ptep == NULL) {
+ 		panic("%s: no ptep?", __FUNCTION__);
+@@ -10911,6 +10921,14 @@
+ 		// comm page, but with new leaf index we've just generated.
+ 		commpage_text_va = (_COMM_PAGE64_BASE_ADDRESS & ~pt_attr_leaf_index_mask(pt_attr));
+ 		commpage_text_va |= (text_leaf_index << pt_attr_leaf_shift(pt_attr));
++#if TEST_PAGE_RATIO_4
++		/*
++		 * The text commpage is mapped with 16K VM pages on 4K hardware
++		 * pages. A 4K-aligned randomized leaf would make pmap_enter_addr()
++		 * and pmap_update_tt3e() address different PTE groups.
++		 */
++		commpage_text_va &= ~(vm_map_address_t)PAGE_MASK;
++#endif
+ 	} while ((commpage_text_va == _COMM_PAGE64_BASE_ADDRESS) || (commpage_text_va == _COMM_PAGE64_RO_ADDRESS)); // Try again if we collide (should be unlikely)
+ 
+ 	// Assert that this is empty
