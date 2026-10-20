@@ -61,9 +61,28 @@ jobs:
           git -C dxb checkout -q FETCH_HEAD
           # 12.5-14.3 use the top-level patches dir; ours go next to blacktop's
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
-          # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64
-          sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
-          grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
+          # libfirehose_kernel is built by xcodebuild, not the XNU makefiles.
+          # It must be patched here, before bash parses build.sh: a patches/*.sh
+          # script runs later and cannot change an already-parsed function body.
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          path = Path('dxb/build.sh')
+          old = 'ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"'
+          if os.environ['MACHINE_CONFIG'] == 'CACTUS':
+              new = ('ARCHS="arm64" VALID_ARCHS="arm64" '
+                     "OTHER_CFLAGS='$(inherited) -mcpu=cortex-a53 -mno-outline-atomics'")
+          else:
+              new = ('ARCHS="x86_64 arm64e arm64" '
+                     'VALID_ARCHS="x86_64 arm64e arm64"')
+          text = path.read_text(encoding='utf-8')
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one libfirehose arch line, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          print(new)
+          PY
+          grep -Ec 'VALID_ARCHS="x86_64 arm64e arm64"|OTHER_CFLAGS=.*mcpu=cortex-a53' dxb/build.sh || true
           ls dxb/patches
 
       - name: Restore prebuilt tools
@@ -73,7 +92,7 @@ jobs:
           path: |
             dxb/fakeroot/usr/local
             dxb/fakeroot/System/Library/Frameworks/System.framework
-          key: prebuild-${{ runner.os }}-${{ env.MACOS_VERSION }}-${{ env.MACHINE_CONFIG }}-${{ env.DXB_SHA }}-${{ hashFiles('xnu/patches/0083-cactus-libfirehose-arm64.sh') }}
+          key: prebuild-${{ runner.os }}-${{ env.MACOS_VERSION }}-${{ env.MACHINE_CONFIG }}-${{ env.DXB_SHA }}-libfirehose-a53-v2
 
       - name: Deps
         run: |

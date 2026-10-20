@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## CACTUS Phase 1 (Redmi 6A, MT6765) - active 2026-10-20
+
+- Branch `cactus-phase1`; CI builds CACTUS via `gh workflow run xnu.yml --ref cactus-phase1 -f machine_config=CACTUS`.
+- Zone-map fix verified in QEMU (`out10`): `kmem_range_init` no longer panics; 24 GiB zone claim; `VM bootstrap done`.
+- Current blocker: LSE atomics in `libfirehose_kernel` (`ldadd` at `___firehose_buffer_tracepoint_flush+0x18`, `0xfffffff007264a0c`). Scan finds 11 real LSE sites in firehose functions, 1 false positive in data.
+- **Root cause found:** `0083-*.sh` edited `dxb/build.sh` while that script was already running; bash had parsed `build_libdispatch()` before the patch, so the xcodebuild line never changed. Removed the script.
+- Fix: workflow now patches `dxb/build.sh` **before execution**, setting `ARCHS=arm64` and `OTHER_CFLAGS='$(inherited) -mcpu=cortex-a53 -mno-outline-atomics'` for CACTUS. Prebuilt cache key bumped to `libfirehose-a53-v2` to discard the bad cached `.a`.
+- Next: dispatch CI, confirm xcodebuild log shows the new flags, scan new kernel for **0 LSE**, then rebuild payload + QEMU `out11`.
+- Prior runs: `39374239912` success (zone fix), `39376030150` failed (script path), `39376538002` success 4 min (caching; still LSE). Latest artifact `C:\Users\lapdq\AppData\Local\Temp\opencode\cactus-run-39376538002\kernel.development.cactus`.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
