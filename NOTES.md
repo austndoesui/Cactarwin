@@ -4,11 +4,13 @@
 
 - Branch `cactus-phase1`; CI builds CACTUS via `gh workflow run xnu.yml --ref cactus-phase1 -f machine_config=CACTUS`.
 - Zone-map fix verified in QEMU (`out10`): `kmem_range_init` no longer panics; 24 GiB zone claim; `VM bootstrap done`.
-- Current blocker: LSE atomics in `libfirehose_kernel` (`ldadd` at `___firehose_buffer_tracepoint_flush+0x18`, `0xfffffff007264a0c`). Scan finds 11 real LSE sites in firehose functions, 1 false positive in data.
-- **Root cause found:** `0083-*.sh` edited `dxb/build.sh` while that script was already running; bash had parsed `build_libdispatch()` before the patch, so the xcodebuild line never changed. Removed the script.
-- Fix: workflow now patches `dxb/build.sh` **before execution**, setting `ARCHS=arm64` and `OTHER_CFLAGS='$(inherited) -mcpu=cortex-a53 -mno-outline-atomics'` for CACTUS. Prebuilt cache key bumped to `libfirehose-a53-v2` to discard the bad cached `.a`.
-- Next: dispatch CI, confirm xcodebuild log shows the new flags, scan new kernel for **0 LSE**, then rebuild payload + QEMU `out11`.
-- Prior runs: `39374239912` success (zone fix), `39376030150` failed (script path), `39376538002` success 4 min (caching; still LSE). Latest artifact `C:\Users\lapdq\AppData\Local\Temp\opencode\cactus-run-39376538002\kernel.development.cactus`.
+- LSE atomics fixed: CI `39377997445` success; Cortex-A53 libfirehose built with `-mno-outline-atomics`; new kernel has **0** real LSE in `__TEXT_EXEC`.
+- **16K/4K pmap panic fixed (2 parts):** `0084-cactus-16k-pte-align.patch` clamps 4K-aligned `v`/`pa` in `pmap_enter_options_internal`; `0085-cactus-commpage-16k-align.patch` aligns the randomized commpage text VA and `pmap_update_tt3e()`.
+- **Gotcha:** `TEST_PAGE_RATIO_4` is `(PAGE_RATIO == 4)` and not a preprocessor constant. An `#if TEST_PAGE_RATIO_4` silently compiled the first 0085 as a no-op; use a runtime `if` like 0084. Verified in disassembly (`and x25,x9,x19` before the commpage text mapping).
+- CI `39385719813` success (head `07b2b85`); artifact `C:\Users\lapdq\AppData\Local\Temp\opencode\cactus-run-39385719813\kernel.development.cactus`.
+- QEMU: `out28`, `out29`, `out31`, `out32` boot cleanly to the `Apple_HFS` IOMedia wait; `out30` panicked in the unrelated interrupt watchdog (`machine_routines_common.c:893`, IRQ handler took 23 ms) under host load. No `write_pte_fast` panic remains.
+- Next: boot further with an HFS ramdisk / real IOMedia, then move to device bring-up.
+- Prior runs: `39374239912` success (zone fix), `39376030150` failed (script path), `39376538002` success (still LSE), `39382038752` success (0084 only; commpage panic remained).
 
 ## Agent handoff / active work (2026-10-15, latest)
 
