@@ -6,9 +6,8 @@
 set -euo pipefail
 
 [[ "${MACHINE_CONFIG:-}" == CACTUS ]] || exit 0
-: "${WORK_DIR:?}"
 
-build="${WORK_DIR}/build.sh"
+build="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/build.sh"
 [[ -f "${build}" ]] || { echo "missing ${build}" >&2; exit 1; }
 
 old='ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"'
