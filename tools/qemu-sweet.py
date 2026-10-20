@@ -20,7 +20,7 @@ snapshot of the circular screen, not a complete boot log. --fail-on-panic
 returns 2 when a panic is visible; absence of a panic does not prove boot.
 An undecodable or blank screen returns 3 with --fail-on-panic.
 """
-import argparse, json, os, socket, struct, subprocess, sys, time, zlib
+import argparse, json, os, re, socket, struct, subprocess, sys, time, zlib
 
 FB_BASE, FB_W, FB_H = 0x9c000000, 1080, 2400
 FB_STRIDE = FB_W * 4
@@ -153,6 +153,7 @@ def main():
     ap.add_argument('--secs', type=float, default=20)
     ap.add_argument('--gdb', action='store_true', help='start halted, gdb stub on :1234, no timeout')
     ap.add_argument('--hmp', action='append', default=[], help='extra monitor command run after stop (repeatable), e.g. "x /8gx 0xfffffe..."')
+    ap.add_argument('--stack', action='store_true', help='dump 256 qwords at SP after stop')
     ap.add_argument('--cpu', default=None)	# default: cortex-a76 (sweet) or cortex-a53 (--cactus)
     ap.add_argument('--cactus', action='store_true', help='Redmi 6A: 720x1440 framebuffer and cortex-a53 defaults')
     ap.add_argument('--kernel', help='matching unstripped kernel, for exact framebuffer text decoding (uses llvm-nm)')
@@ -209,8 +210,14 @@ def main():
         time.sleep(0.2)
     result = {'status': 'qemu_exited', 'qemu_returncode': p.returncode}
     if p.poll() is None:
-        _, regs, *extra = qmp(mon, 'stop', 'info registers', *a.hmp, pmemsave=(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw'))
-        open(f'{out}/regs.txt', 'w').write(regs + ''.join(f'\n(qemu) {c}\n{r}' for c, r in zip(a.hmp, extra)))
+        _, regs, *extra = qmp(mon, 'stop', 'info registers')
+        hmp = list(a.hmp)
+        if a.stack:
+            m = re.search(r'SP=([0-9a-fA-F]+)', regs)
+            if m:
+                hmp.append(f'x /256gx 0x{int(m.group(1), 16):x}')
+        extra = qmp(mon, *hmp, pmemsave=(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw'))
+        open(f'{out}/regs.txt', 'w').write(regs + ''.join(f'\n(qemu) {c}\n{r}' for c, r in zip(hmp, extra)))
         p.kill()
         p.wait()
         raw = open(f'{out}/fb.raw', 'rb').read()

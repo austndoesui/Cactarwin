@@ -1,0 +1,25 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 00568d3..8c1f591 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -5873,6 +5873,20 @@ pmap_enter_options_internal(
+ 		    pmap, (uint64_t)pa);
+ 	}
+ 
++	/*
++	 * CACTUS uses 16K VM pages on 4K hardware pages. A 4K-aligned fault
++	 * address must be expanded to its 16K VM page before it reaches
++	 * pmap_pte(), which otherwise returns a subpage PTE and trips
++	 * write_pte_fast()'s group-alignment check.
++	 */
++	if (TEST_PAGE_RATIO_4 && __improbable(((v & PAGE_MASK) != 0) || ((pa & PAGE_MASK) != 0))) {
++		printf("CACTUS pmap_enter clamp: v 0x%llx -> 0x%llx, pa 0x%llx -> 0x%llx\n",
++		    (unsigned long long)v, (unsigned long long)(v & ~(vm_map_address_t)PAGE_MASK),
++		    (unsigned long long)pa, (unsigned long long)(pa & ~(pmap_paddr_t)PAGE_MASK));
++		v &= ~(vm_map_address_t)PAGE_MASK;
++		pa &= ~(pmap_paddr_t)PAGE_MASK;
++	}
++
+ 	/* The PA should not extend beyond the architected physical address space */
+ 	pa &= ARM_PTE_PAGE_MASK;
+ 
