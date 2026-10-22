@@ -5,15 +5,35 @@
 #include "console.h"
 #include "font.h"
 
-#define SCALE		3
+#define SCALE		CON_SCALE
 #define CH_W		(8 * SCALE)
 #define CH_H		(16 * SCALE)
-#define MARGIN		24
+#define MARGIN		CON_MARGIN
 #define LABEL_COLS	8
+#define MAX_ROWS	((FB_H - 2 * MARGIN) / CH_H)
 
 volatile uint32_t *con_fb = (volatile uint32_t *)FB_BASE;
 static uint32_t con_bg;
 static int row;
+
+static void scroll_up(void)
+{
+	int stride = FB_STRIDE / 4;
+
+	for (int y = 0; y < FB_H - CH_H; y++) {
+		volatile uint32_t *dst = con_fb + y * stride;
+		volatile uint32_t *src = con_fb + (y + CH_H) * stride;
+		for (int x = 0; x < FB_W; x++)
+			dst[x] = src[x];
+	}
+	for (int y = FB_H - CH_H; y < FB_H; y++) {
+		volatile uint32_t *line = con_fb + y * stride;
+		for (int x = 0; x < FB_W; x++)
+			line[x] = con_bg;
+	}
+	if (row > 0)
+		row = MAX_ROWS - 1;
+}
 
 void con_clear(uint32_t bg)
 {
@@ -31,6 +51,8 @@ static void put_char(int col, char ch, uint32_t fg)
 	if (ch < 0x20 || ch > 0x7e)
 		ch = '?';
 	const unsigned char *g = font8x16[ch - 0x20];
+	if (row >= MAX_ROWS)
+		scroll_up();
 	int x0 = MARGIN + col * CH_W, y0 = MARGIN + row * CH_H;
 	if (x0 + CH_W > FB_W || y0 + CH_H > FB_H)
 		return;

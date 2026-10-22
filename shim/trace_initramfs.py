@@ -40,7 +40,9 @@ def cpio_file(name: bytes, data: bytes, inode: int) -> tuple[bytes, int]:
     return prefix + align4(data), len(prefix)
 
 
-def build(source: Path, output: Path, address_file: Path) -> None:
+def build(source: Path, output: Path, address_file: Path,
+          payload: Path | None = None,
+          payload_address_file: Path | None = None) -> None:
     stock = source.read_bytes()
     if stock[:2] != b"\x1f\x8b":
         raise SystemExit("original recovery ramdisk is not gzip")
@@ -54,7 +56,27 @@ def build(source: Path, output: Path, address_file: Path) -> None:
     data += bytes(TRACE_LENGTH - len(data))
     first, value_offset = cpio_file(TRACE_NAME, data, 1)
     trailer, _ = cpio_file(b"TRAILER!!!\0", b"", 2)
-    ramdisk = stock + first + trailer
+    extra = b""
+    if payload is not None:
+        if payload_address_file is None:
+            raise ValueError("payload needs its physical address output file")
+        blob = payload.read_bytes()
+        if not blob.startswith(b"SWEETXNU") or len(blob) < 0x2a8:
+            raise ValueError("invalid embedded XNU payload")
+        # CPIO guarantees four-byte alignment, but the real cactus EL2
+        # boot path traps on unaligned 64-bit reads (ESR=0x96000021).
+        # This filename's newc prefix makes the raw payload start
+        # 16-byte aligned at LK's fixed ramdisk load address.
+        entry, data_offset = cpio_file(b"stage18-payload-aligned-16.bin\0", blob, 3)
+        payload_pa = RAMDISK_ADDRESS + len(stock) + len(first) + data_offset
+        if payload_pa & 15:
+            raise ValueError(f"Stage18 payload is not 16-byte aligned: {payload_pa:#x}")
+        extra = entry
+        payload_address_file.parent.mkdir(parents=True, exist_ok=True)
+        payload_address_file.write_text(
+            f"0x{payload_pa:x} "
+            f"{len(blob)}\n", encoding="ascii")
+    ramdisk = stock + first + extra + trailer
     if ramdisk[:len(stock)] != stock:
         raise AssertionError("stock ramdisk was modified")
     offset = len(stock) + value_offset
@@ -64,7 +86,7 @@ def build(source: Path, output: Path, address_file: Path) -> None:
     verify = zlib.decompressobj(31)
     verify.decompress(ramdisk)
     verify.flush()
-    if not verify.eof or verify.unused_data != first + trailer:
+    if not verify.eof or verify.unused_data != first + extra + trailer:
         raise AssertionError("concatenated archive boundary is invalid")
     if not ramdisk[len(stock):].startswith(b"070701"):
         raise AssertionError("second initramfs archive is not raw newc")
@@ -74,10 +96,12 @@ def build(source: Path, output: Path, address_file: Path) -> None:
     output.write_bytes(ramdisk)
     address_file.write_text(f"0x{RAMDISK_ADDRESS + offset:x}\n", encoding="ascii")
     print(f"stock gzip       {len(stock)} bytes, sha256={hashlib.sha256(stock).hexdigest()}")
-    print(f"extra CPIO       {len(first + trailer)} bytes")
+    print(f"extra CPIO       {len(first + extra + trailer)} bytes")
     print(f"trace file       /{TRACE_NAME[:-1].decode('ascii')} ({len(data)} bytes)")
     print(f"trace offset     {offset:#x}")
     print(f"trace physical   {RAMDISK_ADDRESS + offset:#x} (requires LK's declared load address)")
+    if extra:
+        print(f"Stage18 payload  {payload_address_file.read_text().strip()} (physical, bytes)")
     print(f"output           {output} ({len(ramdisk)} bytes)")
 
 
@@ -106,7 +130,7 @@ def decode(source: Path, extraction: Path | None) -> None:
         for key, value in zip(keys, values):
             print(f"  {key:17} 0x{value:08x}")
         print("Register visibility does not prove a USB gadget will enumerate.")
-    if stage in (8, 9, 10, 11, 12, 13):
+    if stage in (8, 9, 10, 11, 12, 13, 14):
         fields = struct.unpack_from("<16I", debug)
         if fields[0] != 0x38425355 or fields[15] != 0x38444E45:
             raise SystemExit("USB8 proof record is incomplete")
@@ -137,6 +161,12 @@ def decode(source: Path, extraction: Path | None) -> None:
                   f"raw_frames_queued={fields[10]} stalls_or_bad_rx={fields[11]}")
             print("The raw frame is proven transferred only if the Windows")
             print("capture matches the expected 32-byte CLOG payload.")
+        elif stage == 14 and fields[13] == 14:
+            print("Stage 14 bounded reusable CDC probe returned:")
+            print(f"  host_config={fields[7]} dtr_rts={fields[8]:#x} "
+                  f"tx_frames_queued={fields[10]} bad_rx_or_stalls={fields[11]}")
+            print(f"  ring_dropped={fields[12]} ring_pending_at_end={fields[14]}")
+            print("A successful transfer still requires a Windows CLOG v2 capture.")
         elif stage == 13 and fields[13] == 13:
             print("Stage 13 MT6765 PHY recovery + two-second USB sampling:")
             print(f"  usb_resets={fields[4]} ep0_tx_irq={fields[5]} "
@@ -167,12 +197,15 @@ def main() -> None:
     prep.add_argument("stock_gzip", type=Path)
     prep.add_argument("output", type=Path)
     prep.add_argument("address_file", type=Path)
+    prep.add_argument("--payload", type=Path, help="append raw SWEETXNU as separate CPIO file")
+    prep.add_argument("--payload-address-file", type=Path, help="physical address and byte count")
     read = sub.add_parser("decode", help="decode ADB-pulled /cactus-trace.bin")
     read.add_argument("trace", type=Path)
     read.add_argument("--extract-cdb", type=Path, help="save raw CDB1 region for tools/cactus-pstore.py")
     args = parser.parse_args()
     if args.mode == "prepare":
-        build(args.stock_gzip, args.output, args.address_file)
+        build(args.stock_gzip, args.output, args.address_file,
+              args.payload, args.payload_address_file)
     else:
         decode(args.trace, args.extract_cdb)
 

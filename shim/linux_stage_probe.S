@@ -12,14 +12,20 @@
  * STAGE=11: bounded 2s MUSB IRQ/EP0 status sampling, then TWRP.
  * STAGE=12: guarded CDC ACM with raw binary marker, then TWRP.
  * STAGE=13: USB2 PHY device-mode recovery and IRQ sampling, then TWRP.
+ * STAGE=14: reusable CDC with varying binary trace frames, then TWRP.
+ * STAGE=15: Stage 15 early USB C logger using the verified Stage 14 wrapper.
+ * STAGE=16: Real shim FDT/debug preflight inside proven recovery wrapper.
+ * STAGE=17: Report live RAM immediately after FDT parse, before delay.
+ * STAGE=18: Validate relocated XNU payload through real loader admission.
+ * STAGE=19: Load and sample-check XNU segments, ADT and boot_args, then TWRP.
  * No watchdog writes, RTC, framebuffer, or XNU. Stage 4 initializes the
  * existing reserved-RAM trace, but does not configure the kernel's ramoops.
  * A failure can hang; hold power/return to fastboot and restore boot.
  */
 #ifndef STAGE
-#error Specify STAGE=1 through 13
+#error Specify STAGE=1 through 19
 #endif
-#if STAGE < 1 || STAGE > 13
+#if STAGE < 1 || STAGE > 19
 #error Unsupported STAGE
 #endif
 #if STAGE >= 3 && !defined(TRACE_ADDR)
@@ -50,7 +56,19 @@ probe:
     adr x1, probe_stack_top
     mov sp, x1
     adr x1, probe_vectors
+#if STAGE == 16 || STAGE == 17 || STAGE == 18 || STAGE == 19
+    /* LK enters at EL2 on cactus; install the fault vectors at that EL. */
+    mrs x2, CurrentEL
+    cmp x2, #8
+    b.ne 99f
+    msr vbar_el2, x1
+    b 98f
+99:
     msr vbar_el1, x1
+98:
+#else
+    msr vbar_el1, x1
+#endif
     isb
     adr x1, probe_bss
     adr x2, probe_bss_end
@@ -124,7 +142,7 @@ stage_5_after_el_drop:
     ldr w10, [x9]
     ldr w11, [x9, #0xc]
     dsb sy
-#elif STAGE >= 3 && STAGE <= 13
+#elif STAGE >= 3 && STAGE <= 19
     /* The extra CPIO file is at a known offset in the LK-loaded ramdisk.
      * Check the sentinel before writing: if LK used a different address,
      * leave the memory untouched and still hand off to TWRP. */
@@ -224,6 +242,45 @@ stage_5_after_el_drop:
     bl musb_cdc_probe
     ldr x9, =TRACE_ADDR
 #endif
+#if STAGE == 14
+    add x0, x9, #64
+    bl stage14_usb_probe
+    ldr x9, =TRACE_ADDR
+#endif
+#if STAGE == 15
+    /* Run Stage15 early logger from the known-good Stage14 entry with
+     * its CPIO sentinel and preserved Linux/TWRP recovery wrapper. */
+    mov x0, x19
+    bl stage15_early_main
+    ldr x9, =TRACE_ADDR
+#endif
+#if STAGE == 16
+    /* Stage16 reuses the proven wrapper; the real shim components
+     * are invoked by the polled CDC probe with observable brackets. */
+    mov x0, x19
+    bl stage16_probe
+    ldr x9, =TRACE_ADDR
+#endif
+#if STAGE == 17
+    /* Keep Stage14/15/16's working Linux + TWRP wrapper intact. */
+    mov x0, x19
+    bl stage17_probe
+    ldr x9, =TRACE_ADDR
+#endif
+#if STAGE == 18
+    /* Validate the copied payload in the established USB/TWRP wrapper.
+     * No XNU segments are copied and no XNU entry is taken. */
+    mov x0, x19
+    bl stage18_probe
+    ldr x9, =TRACE_ADDR
+#endif
+#if STAGE == 19
+    /* Stage19-A performs real writes only after the Stage18 live
+     * admission gate; USB and TWRP chainload remain in control. */
+    mov x0, x19
+    bl stage19_probe
+    ldr x9, =TRACE_ADDR
+#endif
     /* Commit marker only after all checkpoint fields were written. */
     movz w10, #0x5443                /* ASCII "CTOK" */
     movk w10, #0x4b4f, lsl #16
@@ -282,9 +339,94 @@ chainload:
     .balign 2048
 probe_vectors:
     .rept 16
+#if STAGE == 16 || STAGE == 17 || STAGE == 18 || STAGE == 19
+#if STAGE == 19
+    b stage19_exception_entry
+#elif STAGE == 18
+    b stage18_exception_entry
+#elif STAGE == 17
+    b stage17_exception_entry
+#else
+    b stage16_exception_entry
+#endif
+#else
     b .
+#endif
     .space 124
     .endr
+#if STAGE == 16
+stage16_exception_entry:
+    /* No return from exceptions. Capture EL2 cause while USB is alive. */
+    mrs x0, CurrentEL
+    cmp x0, #8
+    b.ne 96f
+    mrs x0, ESR_EL2
+    mrs x1, ELR_EL2
+    mrs x2, FAR_EL2
+    b 97f
+96:
+    mrs x0, ESR_EL1
+    mrs x1, ELR_EL1
+    mrs x2, FAR_EL1
+97:
+    bl stage16_fault
+95: wfe
+    b 95b
+#endif
+#if STAGE == 17
+stage17_exception_entry:
+    mrs x0, CurrentEL
+    cmp x0, #8
+    b.ne 94f
+    mrs x0, ESR_EL2
+    mrs x1, ELR_EL2
+    mrs x2, FAR_EL2
+    b 93f
+94:
+    mrs x0, ESR_EL1
+    mrs x1, ELR_EL1
+    mrs x2, FAR_EL1
+93:
+    bl stage17_fault
+92: wfe
+    b 92b
+#endif
+#if STAGE == 18
+stage18_exception_entry:
+    mrs x0, CurrentEL
+    cmp x0, #8
+    b.ne 91f
+    mrs x0, ESR_EL2
+    mrs x1, ELR_EL2
+    mrs x2, FAR_EL2
+    b 90f
+91:
+    mrs x0, ESR_EL1
+    mrs x1, ELR_EL1
+    mrs x2, FAR_EL1
+90:
+    bl stage18_fault
+89: wfe
+    b 89b
+#endif
+#if STAGE == 19
+stage19_exception_entry:
+    mrs x0, CurrentEL
+    cmp x0, #8
+    b.ne 87f
+    mrs x0, ESR_EL2
+    mrs x1, ELR_EL2
+    mrs x2, FAR_EL2
+    b 86f
+87:
+    mrs x0, ESR_EL1
+    mrs x1, ELR_EL1
+    mrs x2, FAR_EL1
+86:
+    bl stage19_fault
+85: wfe
+    b 85b
+#endif
     .balign 16
 probe_bss:
     .space 4096
@@ -292,6 +434,7 @@ probe_bss_end:
     .space 32768
 probe_stack_top:
     .balign 4096
+    .global image_end
 image_end:
 #if STAGE == 6
 stage_6_message:

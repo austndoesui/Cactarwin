@@ -6,8 +6,8 @@ cd "$(dirname "$0")"
 
 STAGE="${1:-3}"
 case "$STAGE" in
-    3|4|5|6|7|8|9|10|11|12|13) ;;
-    *) echo "usage: $0 [3|4|5|6|7|8|9|10|11|12|13]" >&2; exit 2 ;;
+    3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19) ;;
+    *) echo "usage: $0 [3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19]" >&2; exit 2 ;;
 esac
 
 OUT="out/cactus/linux-chainload"
@@ -19,7 +19,18 @@ for f in "$STOCK" "$DTB" "$DTBO" "$MKBOOT" "$OUT/recovery-Image"; do
     test -f "$f" || { echo "missing: $f" >&2; exit 1; }
 done
 
-python3 trace_initramfs.py prepare "$STOCK" "$OUT/trace-ramdisk.bin" "$OUT/trace-address.txt"
+PAYLOAD_DEFINE=()
+if [[ "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+    test -f out/cactus/payload.bin || { echo "missing: out/cactus/payload.bin" >&2; exit 1; }
+    python3 prepare_stage18_payload.py out/cactus/payload.bin "$OUT/stage18-payload.bin"
+    python3 trace_initramfs.py prepare "$STOCK" "$OUT/trace-ramdisk.bin" \
+        "$OUT/trace-address.txt" --payload "$OUT/stage18-payload.bin" \
+        --payload-address-file "$OUT/stage18-address.txt"
+    read -r PAYLOAD_ADDR PAYLOAD_BYTES < "$OUT/stage18-address.txt"
+    PAYLOAD_DEFINE=(-DPAYLOAD_ADDR="$PAYLOAD_ADDR" -DPAYLOAD_LENGTH="$PAYLOAD_BYTES")
+else
+    python3 trace_initramfs.py prepare "$STOCK" "$OUT/trace-ramdisk.bin" "$OUT/trace-address.txt"
+fi
 TRACE_ADDR="$(cat "$OUT/trace-address.txt")"
 PREFIX="$OUT/trace-stage-$STAGE"
 CFLAGS=(-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only
@@ -37,6 +48,36 @@ if [[ "$STAGE" == 6 ]]; then
     OBJECTS+=("$PREFIX-pmsg.o")
 fi
 if [[ "$STAGE" -ge 8 ]]; then
+  if [[ "$STAGE" == 14 || "$STAGE" == 15 || "$STAGE" == 16 || "$STAGE" == 17 || "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+    SOURCES=(cactus_usb cactus_trace)
+    EXTRA_DEFINES=()
+    if [[ "$STAGE" == 15 ]]; then
+      SOURCES+=(stage15_early)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=15 -DSHIM_STAGE15_EARLY=1)
+    elif [[ "$STAGE" == 16 ]]; then
+      # Actual cactus shim FDT and reserved-RAM debug routines, but no
+      # loader or XNU branch. Dead FDT framebuffer functions are GC'd.
+      SOURCES+=(stage16_probe fdt fdt_ranges debug)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=16 -ffunction-sections -fdata-sections)
+    elif [[ "$STAGE" == 17 ]]; then
+      SOURCES+=(stage17_probe fdt fdt_ranges)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=17 -ffunction-sections -fdata-sections)
+    elif [[ "$STAGE" == 18 ]]; then
+      SOURCES+=(stage18_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=18 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 19 ]]; then
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=19 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    else
+      SOURCES+=(stage14_probe)
+    fi
+    for source in "${SOURCES[@]}"; do
+      aarch64-linux-gnu-gcc "${CFLAGS[@]}" -Wall -Wextra -Werror \
+          "${EXTRA_DEFINES[@]}" \
+          -c "$source.c" -o "$PREFIX-$source.o"
+      OBJECTS+=("$PREFIX-$source.o")
+    done
+  else
     USB_PROBE_LEVEL=2
     if [[ "$STAGE" == 9 ]]; then USB_PROBE_LEVEL=0; fi
     if [[ "$STAGE" == 10 ]]; then USB_PROBE_LEVEL=1; fi
@@ -47,8 +88,13 @@ if [[ "$STAGE" -ge 8 ]]; then
         -DUSB_PROBE_LEVEL="$USB_PROBE_LEVEL" \
         -c musb_cdc_probe.c -o "$PREFIX-musb.o"
     OBJECTS+=("$PREFIX-musb.o")
+  fi
 fi
-aarch64-linux-gnu-ld --build-id=none -N -Ttext=0 "${OBJECTS[@]}" -o "$PREFIX.elf"
+if [[ "$STAGE" == 16 || "$STAGE" == 17 || "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+  aarch64-linux-gnu-ld --build-id=none -N -e _start --gc-sections -Ttext=0 "${OBJECTS[@]}" -o "$PREFIX.elf"
+else
+  aarch64-linux-gnu-ld --build-id=none -N -Ttext=0 "${OBJECTS[@]}" -o "$PREFIX.elf"
+fi
 aarch64-linux-gnu-objcopy -O binary "$PREFIX.elf" "$PREFIX-Image"
 
 # The C function for stage 4 is linked after the probe assembly's end label.
@@ -68,6 +114,11 @@ PY
 gzip -9 -c "$PREFIX-Image" > "$PREFIX.gz"
 cat "$PREFIX.gz" "$DTB" > "$PREFIX.gz-dtb"
 IMAGE="$PWD/out/cactus/cactus-trace-stage-$STAGE-boot.img"
+if [[ "$STAGE" == 18 ]]; then
+  # Keep the first hardware-tested Stage18 image intact for comparing
+  # its reproducible unaligned-payload data abort with this fix.
+  IMAGE="$PWD/out/cactus/cactus-trace-stage-18-aligned-boot.img"
+fi
 python3 "$MKBOOT" --header_version 2 \
     --kernel "$PREFIX.gz-dtb" --ramdisk "$OUT/trace-ramdisk.bin" --dtb "$DTBO" \
     --base 0x40078000 --kernel_offset 0x00008000 \
