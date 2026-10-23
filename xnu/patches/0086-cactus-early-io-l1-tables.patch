@@ -1,0 +1,27 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2334,5 +2334,23 @@ arm_vm_init(boot_args * args)
+ 	va_l1_end = va_l1 + ((2 + (mem_segments * 10)) << 20);
+ 	va_l1_end += round_page(args->Video.v_height * args->Video.v_rowBytes);
+ 	va_l1_end = (va_l1_end + 0x00000000007FFFFFULL) & 0xFFFFFFFFFF800000ULL;
+ 
++#if defined(CACTUS)
++	/*
++	 * The dynamic I/O aperture may begin near the end of an L1 (1 GiB)
++	 * region. The L3 preallocation loop below assumes every L1 entry
++	 * spanning [va_l1, va_l1_end) already points to a valid L2 page.
++	 *
++	 * On cactus the framebuffer io_map() spans the 0xfffffff04a000000
++	 * L1 boundary. The ARM_LARGE_MEMORY bootstrap created only the
++	 * first L1 entry, and dereferencing the missing next entry later
++	 * left pmap_map_bd() with no PTE. Allocate all needed L2 parents
++	 * using the existing page allocator before populating L3 pages.
++	 * init_ptpages() increments by ARM_TT_L1_SIZE from its start, so
++	 * start must be aligned down to the L1 boundary as well.
++	 */
++	init_ptpages(cpu_tte, va_l1 & ~ARM_TT_L1_OFFMASK, va_l1_end,
++	    FALSE, ARM_DYNAMIC_TABLE_XN | ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
++#endif
++
+ 	cpu_l1_tte = cpu_tte + ((va_l1 & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT);
