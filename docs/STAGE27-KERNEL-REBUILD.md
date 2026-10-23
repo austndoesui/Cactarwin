@@ -1,5 +1,16 @@
 # Stage 27 — Rebuild patched Cactus XNU and validate bootstrap mappings
 
+**Actual outcome (2026-10-23):** macOS GitHub Actions run `39995786681`
+completed successfully for `CACTUS`; the extracted ARM64 Mach-O
+`kernel.development.cactus` has SHA-256
+`a1b8677a3449664fd17a9ee4b3740a76d2d489d0dbf1dce5e4ca5887f3840008`.
+Stage32 diagnostic image SHA-256
+`baa92d94c5460dec236d61ad008fd49ab4dbaba0b6917f05380a232cfbdce18c`
+was flashed and ran EL1, producing **71 valid COM25 frames**. XNU
+still panicked through `pmap_map_bd.cold.1`. A follow-up Stage33
+capture shows the exact remaining missing L1 at
+`0xfffffff03b000000`; see [Stage28](STAGE28-FRAMEBUFFER-PLAN.md).
+
 **Objective:** compile a new XNU Mach-O for the Redmi 6A with the actual
 early-I/O page-table correction, then test native execution with the
 proven COM25 diagnostic shim. This is **not** yet evidence of a boot.

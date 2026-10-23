@@ -1,0 +1,28 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2335,6 +2335,24 @@ arm_vm_init(boot_args * args)
+ 	va_l1_end += round_page(args->Video.v_height * args->Video.v_rowBytes);
+ 	va_l1_end = (va_l1_end + 0x00000000007FFFFFULL) & 0xFFFFFFFFFF800000ULL;
+ 
++#if defined(CACTUS)
++	/*
++	 * Keep the entire early framebuffer io_map() request inside the range
++	 * for which the L1/L2/L3 table pages below are created. The baseline
++	 * formula reserves space for the framebuffer itself, but other early
++	 * I/O mappings consume that space first.
++	 *
++	 * Stage28, with the Stage27 XNU kernel and original 720x1440 video
++	 * geometry, measured a framebuffer map from 0xfffffff03adbb000
++	 * across the *unallocated* L1 boundary at 0xfffffff03b000000.
++	 * The map extends at least another 0x1b0000 bytes beyond that
++	 * boundary. Reserve 16 MiB of additional early I/O virtual space;
++	 * this remains 8 MiB aligned and is backed by the normal table-page
++	 * allocator. The next COM25 test must verify actual behavior.
++	 */
++	va_l1_end += 0x01000000ULL;
++#endif
++
+ #if defined(CACTUS)
+ 	/*
+ 	 * The dynamic I/O aperture may begin near the end of an L1 (1 GiB)
