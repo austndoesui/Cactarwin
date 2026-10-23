@@ -24,6 +24,66 @@ def frame(seq, event=0x1403, stage=14, level=0, result=None):
 
 
 class DecoderTests(unittest.TestCase):
+    def test_stage20b_first_real_branch_requires_exact_trap(self):
+        events = [0x1900, 0x1901, 0x1910, 0x1912, 0x1911, 0x1930]
+        for _ in range(10):
+            events.extend((0x1940, 0x1941))
+        events.extend((0x1950, 0x1951, 0x1952, 0x20b0, 0x20a0,
+                       0x20a1, 0x20b2, 0x20b3, 0x20a3, 0x20b4,
+                       0x20ff, 0x19ff))
+
+        def data(bad_trap=False, wrong_target=False):
+            built = []
+            segment = 0
+            for index, event in enumerate(events):
+                f = bytearray(frame(index, event, stage=21))
+                if event in (0x1901, 0x1910):
+                    struct.pack_into("<Q", f, 28, 1)
+                if event in (0x1911, 0x19ff, 0x20ff):
+                    struct.pack_into("<Q", f, 28, 0)
+                if event in (0x1940, 0x1941):
+                    struct.pack_into("<Q", f, 28, segment)
+                    if event == 0x1941:
+                        segment += 1
+                if event == 0x20b0:
+                    struct.pack_into("<QQQ", f, 28, 0x8142d488,
+                                     0x8142f0ec, 0x14000719)
+                if event == 0x20a1:
+                    f[7] = 4
+                    struct.pack_into("<QQQ", f, 28, 4, 0x8142d488,
+                                     0x824bc000)
+                if event == 0x20b2:
+                    f[7] = 4
+                    struct.pack_into("<QQQ", f, 28,
+                                     (0x3c << 26) | (0xb21 if bad_trap else 0xb20),
+                                     0x8142f0ec + (4 if wrong_target else 0), 0)
+                if event == 0x20b3:
+                    struct.pack_into("<QQQ", f, 28, (0x16 << 26) | 0x21,
+                                     0x41e38060, 0x3c5)
+                if event == 0x20a3:
+                    struct.pack_into("<Q", f, 28, 8)
+                if event == 0x20b4:
+                    struct.pack_into("<QQQ", f, 28, 1, 1, 1)
+                struct.pack_into("<I", f, 52, zlib.crc32(f[:52]))
+                built.append(bytes(f))
+            return b"".join(built)
+
+        with tempfile.TemporaryDirectory(
+                dir=Path(__file__).resolve().parent / "out" / "cactus") as folder:
+            capture = Path(folder) / "stage20b.bin"
+            command = [sys.executable,
+                       str(Path(__file__).with_name("decode-cactus-usb.py")),
+                       str(capture), "--require-stage20b"]
+            capture.write_bytes(data())
+            good = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertIn("FIRST REAL XNU BRANCH PASS", good.stdout)
+            for bad in (data(bad_trap=True), data(wrong_target=True),
+                        data()[:-56]):
+                capture.write_bytes(bad)
+                failure = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(failure.returncode, 0)
+
     def test_variable_packets_and_unaligned_capture(self):
         data = b"noise" + b"".join(frame(i) for i in range(120)) + b"tail"
         items, bad, noise = decoder.decode(data)
@@ -137,6 +197,63 @@ class DecoderTests(unittest.TestCase):
                                enumerate(events) if i != 9))
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_stage20_gate_proves_el1_and_hvc_return(self):
+        events = [0x1900, 0x1901, 0x1910, 0x1912, 0x1911, 0x1930]
+        for i in range(10):
+            events.extend([0x1940, 0x1941])
+        events.extend([0x1950, 0x1951, 0x1952, 0x20a0,
+                       0x20a1, 0x20a2, 0x20a3, 0x20ff, 0x19ff])
+        def make(event, seq, segment_no, wrong_el=False):
+            b = bytearray(frame(seq, event, stage=20))
+            if event in (0x1901, 0x1910):
+                struct.pack_into("<Q", b, 28, 1)
+            if event in (0x1911, 0x19ff, 0x20ff):
+                struct.pack_into("<Q", b, 28, 0)
+            if event in (0x1940, 0x1941):
+                struct.pack_into("<Q", b, 28, segment_no)
+            if event == 0x20a1:
+                b[7] = 8 if wrong_el else 4
+                struct.pack_into("<QQQ", b, 28, 4, 0x8142d488,
+                                 0x824bc000)
+            if event == 0x20a2:
+                struct.pack_into("<QQQ", b, 28, (0x16 << 26) | 0x20,
+                                 0x41e38060, 0x3c5)
+            if event == 0x20a3:
+                struct.pack_into("<Q", b, 28, 8)
+            struct.pack_into("<I", b, 52, zlib.crc32(b[:52]))
+            return bytes(b)
+        def assemble(wrong_el=False, omit_finish=False):
+            number = 0
+            index = 0
+            out = []
+            for e in events:
+                if e in (0x1940, 0x1941):
+                    if omit_finish and e == 0x1941 and index == 5:
+                        index += 1
+                        continue
+                    out.append(make(e, number, index // 2, wrong_el))
+                    index += 1
+                else:
+                    out.append(make(e, number, 0, wrong_el))
+                number += 1
+            return b"".join(out)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent /
+                                         "out" / "cactus") as folder:
+            sample = Path(folder) / "stage20.bin"
+            call = [sys.executable,
+                    str(Path(__file__).with_name("decode-cactus-usb.py")),
+                    str(sample), "--require-stage20"]
+            sample.write_bytes(assemble())
+            ok = subprocess.run(call, capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+            self.assertIn("STAGE20 EL1 ERET/HVC RETURN PASS", ok.stdout)
+            sample.write_bytes(assemble(wrong_el=True))
+            bad = subprocess.run(call, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            sample.write_bytes(assemble(omit_finish=True))
+            missing = subprocess.run(call, capture_output=True, text=True)
+            self.assertNotEqual(missing.returncode, 0)
 
 
 if __name__ == "__main__":

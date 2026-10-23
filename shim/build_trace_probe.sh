@@ -6,8 +6,8 @@ cd "$(dirname "$0")"
 
 STAGE="${1:-3}"
 case "$STAGE" in
-    3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19) ;;
-    *) echo "usage: $0 [3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19]" >&2; exit 2 ;;
+    3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30) ;;
+    *) echo "usage: $0 [3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30]" >&2; exit 2 ;;
 esac
 
 OUT="out/cactus/linux-chainload"
@@ -20,9 +20,29 @@ for f in "$STOCK" "$DTB" "$DTBO" "$MKBOOT" "$OUT/recovery-Image"; do
 done
 
 PAYLOAD_DEFINE=()
-if [[ "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+if [[ "$STAGE" -ge 18 ]]; then
     test -f out/cactus/payload.bin || { echo "missing: out/cactus/payload.bin" >&2; exit 1; }
     python3 prepare_stage18_payload.py out/cactus/payload.bin "$OUT/stage18-payload.bin"
+    if [[ "$STAGE" == 21 ]]; then
+        python3 check_stage20b_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 22 ]]; then
+        python3 check_stage20c_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 23 ]]; then
+        python3 check_stage20d_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 24 ]]; then
+        python3 check_stage21c1_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 25 ]]; then
+        python3 check_stage21c2_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 26 ]]; then
+        python3 check_stage21d_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 27 ]]; then
+        python3 check_stage22_entry.py "$OUT/stage18-payload.bin"
+    elif [[ "$STAGE" == 28 || "$STAGE" == 29 || "$STAGE" == 30 ]]; then
+        python3 check_stage22_entry.py "$OUT/stage18-payload.bin"
+        if [[ "$STAGE" == 30 ]]; then
+            python3 check_stage25_pmap.py "$OUT/stage18-payload.bin"
+        fi
+    fi
     python3 trace_initramfs.py prepare "$STOCK" "$OUT/trace-ramdisk.bin" \
         "$OUT/trace-address.txt" --payload "$OUT/stage18-payload.bin" \
         --payload-address-file "$OUT/stage18-address.txt"
@@ -38,6 +58,16 @@ CFLAGS=(-O2 -ffreestanding -nostdlib -fno-pic -mgeneral-regs-only
 
 aarch64-linux-gnu-gcc "${CFLAGS[@]}" -x assembler-with-cpp -DSTAGE="$STAGE" \
     -DTRACE_ADDR="$TRACE_ADDR" -c linux_stage_probe.S -o "$PREFIX.o"
+# Stages 19+ must call the USB/XNU diagnostic probe from the live entry
+# wrapper. If the preprocessor omits that branch, the image silently boots
+# TWRP with no COM25 frames and an untouched CTRC header.
+if [[ "$STAGE" -ge 19 ]]; then
+    if ! aarch64-linux-gnu-readelf -r "$PREFIX.o" |
+         grep -Eq 'R_AARCH64_CALL26[[:space:]]+[^[:space:]]+[[:space:]]+stage19_probe'; then
+        echo "stage $STAGE entry does not call stage19_probe" >&2
+        exit 1
+    fi
+fi
 OBJECTS=("$PREFIX.o")
 if [[ "$STAGE" == 4 ]]; then
     aarch64-linux-gnu-gcc "${CFLAGS[@]}" -c debug.c -o "$PREFIX-debug.o"
@@ -48,7 +78,7 @@ if [[ "$STAGE" == 6 ]]; then
     OBJECTS+=("$PREFIX-pmsg.o")
 fi
 if [[ "$STAGE" -ge 8 ]]; then
-  if [[ "$STAGE" == 14 || "$STAGE" == 15 || "$STAGE" == 16 || "$STAGE" == 17 || "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+  if [[ "$STAGE" -ge 14 ]]; then
     SOURCES=(cactus_usb cactus_trace)
     EXTRA_DEFINES=()
     if [[ "$STAGE" == 15 ]]; then
@@ -68,6 +98,53 @@ if [[ "$STAGE" -ge 8 ]]; then
     elif [[ "$STAGE" == 19 ]]; then
       SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
       EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=19 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 20 ]]; then
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=20 -DCACTUS_STAGE20=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 21 ]]; then
+      # Stage20-B uses its own image so the Stage20-A hardware image survives.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=21 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 22 ]]; then
+      # Stage20-C runs the known early framebuffer code until XNU's VBAR write.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=22 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 23 ]]; then
+      # Stage20-D runs real XNU VBAR handoff through a reversible vector stub.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=23 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 24 ]]; then
+      # Stage21-C1: MMU-off EL1t trap; use HVC and EL2's physical stack.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=24 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 25 ]]; then
+      # Stage21-C2: first translated instruction and virtual EL1t vector.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=25 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 26 ]]; then
+      # Stage21-D: trap/fault after virtual C prologue, preserve EL2 USB return.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=26 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_STAGE21D=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 27 ]]; then
+      # Combined Stage22: let XNU run through early relocations and init
+      # calls, capture the first real fault or the later C milestone.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=27 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_STAGE21D=1 -DCACTUS_STAGE22=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 28 ]]; then
+      # Stage23: retain the Stage22 hardware-proven admission and vector
+      # checks, run XNU without a synthetic trap, and retain fault logs.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=28 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_STAGE21D=1 -DCACTUS_STAGE22=1 -DCACTUS_STAGE23=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 29 ]]; then
+      # Stage24: native Stage23 XNU continuation with original XNU
+      # register snapshot on first EL1 sync HVC for panic provenance.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=29 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_STAGE21D=1 -DCACTUS_STAGE22=1 -DCACTUS_STAGE23=1 -DCACTUS_STAGE24=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
+    elif [[ "$STAGE" == 30 ]]; then
+      # Stage25: trap exactly where pmap_map_bd would panic for a null
+      # kernel page-table entry and capture its VA/PA range and descriptors.
+      SOURCES+=(stage19_probe fdt fdt_ranges payload_layout)
+      EXTRA_DEFINES=(-DCACTUS_TRACE_STAGE=30 -DCACTUS_STAGE20=1 -DCACTUS_STAGE20B=1 -DCACTUS_STAGE20C=1 -DCACTUS_STAGE20D=1 -DCACTUS_STAGE21C1=1 -DCACTUS_STAGE21C2=1 -DCACTUS_STAGE21D=1 -DCACTUS_STAGE22=1 -DCACTUS_STAGE23=1 -DCACTUS_STAGE24=1 -DCACTUS_STAGE25=1 -DCACTUS_TRACE_SLOTS=64 -ffunction-sections -fdata-sections "${PAYLOAD_DEFINE[@]}")
     else
       SOURCES+=(stage14_probe)
     fi
@@ -90,7 +167,7 @@ if [[ "$STAGE" -ge 8 ]]; then
     OBJECTS+=("$PREFIX-musb.o")
   fi
 fi
-if [[ "$STAGE" == 16 || "$STAGE" == 17 || "$STAGE" == 18 || "$STAGE" == 19 ]]; then
+if [[ "$STAGE" -ge 16 ]]; then
   aarch64-linux-gnu-ld --build-id=none -N -e _start --gc-sections -Ttext=0 "${OBJECTS[@]}" -o "$PREFIX.elf"
 else
   aarch64-linux-gnu-ld --build-id=none -N -Ttext=0 "${OBJECTS[@]}" -o "$PREFIX.elf"
