@@ -1,10 +1,16 @@
 diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
 --- a/pexpert/arm/pe_serial.c
 +++ b/pexpert/arm/pe_serial.c
-@@ -714,12 +714,27 @@
+@@ -713,13 +713,33 @@
+ 
  extern unsigned char iso_font[256 * 16];
  
++#if defined(CACTUS)
++/* 8x16 glyphs: 90 columns x 90 rows on the 720x1440 panel. */
++#define FBCON_SCALE     1
++#else
  #define FBCON_SCALE     2
++#endif
 +#if defined(CACTUS)
 +/* Rows [0, 7) always belong to the native Cactarwin status header. */
 +#define FBCON_HEADER_ROWS 7u
@@ -29,7 +35,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  
  static void
  fbcon_clear_row(uint32_t row)
-@@ -736,9 +751,16 @@
+@@ -736,9 +756,16 @@
  fbcon_newline(void)
  {
  	fbcon_col = 0;
@@ -48,7 +54,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  }
  
  static void
-@@ -747,9 +769,25 @@
+@@ -747,9 +774,25 @@
  	fbcon_cols = fbcon_width / (8 * FBCON_SCALE);
  	fbcon_rows = fbcon_height / (16 * FBCON_SCALE);
  	fbcon_col = fbcon_row = 0;
@@ -74,7 +80,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  }
  
  static unsigned int
-@@ -787,6 +825,31 @@
+@@ -787,6 +830,31 @@
  	}
  	fbcon_col++;
  }
