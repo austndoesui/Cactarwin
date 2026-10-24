@@ -1,0 +1,259 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -714,12 +714,27 @@
+ extern unsigned char iso_font[256 * 16];
+ 
+ #define FBCON_SCALE     2
++#if defined(CACTUS)
++/* Rows [0, 7) always belong to the native Cactarwin status header. */
++#define FBCON_HEADER_ROWS 7u
++#endif
+ #define FBCON_FG        0xffffffffu
+ #define FBCON_BG        0xff000000u
+ 
+ static volatile uint32_t *fbcon_base;
+ static uint32_t fbcon_width, fbcon_height, fbcon_stride;
+ static uint32_t fbcon_cols, fbcon_rows, fbcon_col, fbcon_row;
++static uint32_t fbcon_log_first_row;
++static void fbcon_transmit_data(uint8_t c);
++#if defined(CACTUS)
++static void
++fbcon_literal(const char *s)
++{
++	while (*s) {
++		fbcon_transmit_data((uint8_t)*s++);
++	}
++}
++#endif
+ 
+ static void
+ fbcon_clear_row(uint32_t row)
+@@ -736,9 +751,16 @@
+ fbcon_newline(void)
+ {
+ 	fbcon_col = 0;
+-	fbcon_row = (fbcon_row + 1) % fbcon_rows;
++	fbcon_row++;
++	if (fbcon_row >= fbcon_rows) {
++		fbcon_row = fbcon_log_first_row;
++	}
+ 	fbcon_clear_row(fbcon_row);
+-	fbcon_clear_row((fbcon_row + 1) % fbcon_rows);
++	uint32_t next_row = fbcon_row + 1;
++	if (next_row >= fbcon_rows) {
++		next_row = fbcon_log_first_row;
++	}
++	fbcon_clear_row(next_row);
+ }
+ 
+ static void
+@@ -747,9 +769,25 @@
+ 	fbcon_cols = fbcon_width / (8 * FBCON_SCALE);
+ 	fbcon_rows = fbcon_height / (16 * FBCON_SCALE);
+ 	fbcon_col = fbcon_row = 0;
++	fbcon_log_first_row = 0;
+ 	for (uint32_t r = 0; r < fbcon_rows; r++) {
+ 		fbcon_clear_row(r);
+ 	}
++#if defined(CACTUS)
++	if (fbcon_rows > FBCON_HEADER_ROWS + 4) {
++		fbcon_literal("=== [ Cactarwin / Cactus-XNU ] ===\n");
++		fbcon_literal("PROJECT  Cactarwin (cactus-xnu)\n");
++		fbcon_literal("DEVICE   Xiaomi Redmi 6A (cactus)\n");
++		fbcon_literal("DISPLAY  720x1440 framebuffer\n");
++		fbcon_literal("--------------------------------\n");
++		fbcon_literal("STATUS   Native XNU startup\n");
++		fbcon_literal("--------------------------------\n");
++		fbcon_log_first_row = FBCON_HEADER_ROWS;
++		fbcon_col = 0;
++		fbcon_row = FBCON_HEADER_ROWS;
++		fbcon_clear_row(fbcon_row);
++	}
++#endif
+ }
+ 
+ static unsigned int
+@@ -787,6 +825,31 @@
+ 	}
+ 	fbcon_col++;
+ }
++
++#if defined(CACTUS)
++/*
++ * Update the fixed status line without allocating, printing or taking a
++ * lock. Called during single-CPU kernel bringup before threaded logging.
++ * Restores the scroll cursor so normal output continues uninterrupted.
++ */
++void
++fbcon_stage53_progress(const char *message)
++{
++    if (fbcon_base == NULL || fbcon_log_first_row != FBCON_HEADER_ROWS) {
++        return;
++    }
++    const uint32_t old_row = fbcon_row, old_col = fbcon_col;
++    fbcon_row = FBCON_HEADER_ROWS - 2;
++    fbcon_col = 0;
++    fbcon_clear_row(fbcon_row);
++    fbcon_literal("STATUS   ");
++    while (*message && fbcon_col < fbcon_cols) {
++        fbcon_transmit_data((uint8_t)*message++);
++    }
++    fbcon_row = old_row;
++    fbcon_col = old_col;
++}
++#endif
+ 
+ static unsigned int
+ fbcon_receive_ready(void)
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -216,11 +216,20 @@
+ 
+ extern int serverperfmode;
+ 
++#if defined(CACTUS)
++/* Print every XNU startup phase, hook, and bootstrap operation. */
++TUNABLE(startup_debug_t, startup_debug, "startup_debug", STARTUP_DEBUG_VERBOSE);
++extern void fbcon_stage53_progress(const char *message);
++#else
+ TUNABLE(startup_debug_t, startup_debug, "startup_debug", 0);
++#endif
+ 
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(CACTUS)
++	fbcon_stage53_progress(message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap: %s\n", message);
+@@ -231,6 +240,9 @@
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(CACTUS)
++	fbcon_stage53_progress(message);
++#endif
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap_thread: %s\n", message);
+@@ -489,6 +501,7 @@
+ #endif
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_MACH_IPC);
++	kernel_bootstrap_log("MACH_IPC complete");
+ 
+ 	/*
+ 	 * As soon as the virtual memory system is up, we record
+@@ -574,7 +587,7 @@
+ 
+ 	thread_deallocate(thread);
+ 
+-	kernel_bootstrap_log("load_context - done");
++	kernel_bootstrap_log("load_context enter");
+ 	load_context(thread);
+ 	/*NOTREACHED*/
+ }
+@@ -623,6 +636,7 @@
+ 	 * Thread callout service.
+ 	 */
+ 	kernel_startup_initialize_upto(STARTUP_SUB_THREAD_CALL);
++	kernel_bootstrap_thread_log("THREAD_CALL complete");
+ 
+ 	/*
+ 	 * Remain on current processor as
+@@ -670,6 +684,7 @@
+ #endif
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_SYSCTL);
++	kernel_bootstrap_thread_log("SYSCTL complete");
+ 
+ 	/*
+ 	 * Initialize the globals used for permuting kernel
+@@ -696,6 +711,7 @@
+ 	 * interrupts or preemption enabled may begin enforcement.
+ 	 */
+ 	kernel_startup_initialize_upto(STARTUP_SUB_EARLY_BOOT);
++	kernel_bootstrap_thread_log("EARLY_BOOT complete");
+ 
+ #if SCHED_HYGIENE_DEBUG
+ 	// Reset interrupts masked timeout before we enable interrupts
+@@ -787,7 +803,9 @@
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++	kernel_bootstrap_thread_log("bsd_init enter");
+ 	bsd_init();
++	kernel_bootstrap_thread_log("bsd_init returned");
+ #endif
+ 
+ 
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -490,7 +490,11 @@
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+ 
++#if defined(CACTUS)
++#define DEBUG_BSDINIT 1
++#else
+ #define DEBUG_BSDINIT 0
++#endif
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
+@@ -498,6 +502,10 @@
+ #define bsd_init_kprintf(x, ...)
+ #endif
+ 
++#if defined(CACTUS)
++	extern void fbcon_stage53_progress(const char *);
++	fbcon_stage53_progress("bsd_init: throttle_init");
++#endif
+ 	throttle_init();
+ 
+ 	printf(copyright);
+@@ -1044,7 +1052,13 @@
+ 	siginit(kernproc);
+ 
+ 	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("bsd_utaskbootstrap enter");
++#endif
+ 	bsd_utaskbootstrap();
++#if defined(CACTUS)
++	fbcon_stage53_progress("bsd_utaskbootstrap done");
++#endif
+ 
+ 	pal_kernel_announce();
+ 
+@@ -1069,6 +1083,9 @@
+ 	machine_timeout_bsd_init();
+ #endif /* DEVELOPMENT || DEBUG */
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("bsd_init complete");
++#endif
+ 	bsd_init_kprintf("done\n");
+ }
+ 
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -123,8 +123,10 @@
+ 		return;
+ 	}
+ #if defined(CACTUS)
+-	if (stage == 20) {
+-		cactus_stage52_banner();
++	/* Once the native fbcon owns layer1 (after serial_init),
++	 * reserve its header and log rows. Early panic stays active. */
++	if (stage >= 19) {
++		return;
+ 	}
+ #endif
+ 	uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
