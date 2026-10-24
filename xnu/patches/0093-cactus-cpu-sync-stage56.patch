@@ -53,18 +53,27 @@ diff --git a/osfmk/arm/machine_routines_common.c b/osfmk/arm/machine_routines_co
 diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -130,6 +130,10 @@
+@@ -121,6 +121,9 @@
+ 	return true;
+ }
+ 
++#if defined(CACTUS)
++extern "C" void fbcon_stage53_progress(const char *);
++#endif
+ /* Do not wait in a nub's start(): matching can be asynchronous or serialized. */
+ void
+ SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
+@@ -130,6 +133,9 @@
  	PE_parse_boot_argn("cpus", &requested, sizeof(requested));
  	IOLog("SWEET CPU: requested=%u selected=%u (limit=%u)\n",
  	    requested, topology->num_cpus, SWEET_SMP_MAX_CPUS);
 +#if defined(CACTUS)
-+	extern void fbcon_stage53_progress(const char *);
 +	fbcon_stage53_progress("ST56 CPU startAll enter");
 +#endif
  
  	uint64_t deadline;
  	nanoseconds_to_deadline(10 * NSEC_PER_SEC, &deadline);
-@@ -144,16 +148,25 @@
+@@ -144,16 +150,25 @@
  		}
  		IOSleep(1);
  	}
@@ -90,7 +99,7 @@ diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
  		/* processor_start() is asynchronous for secondaries in this XNU. */
  		nanoseconds_to_deadline(5 * NSEC_PER_SEC, &deadline);
  		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
-@@ -167,12 +180,21 @@
+@@ -167,12 +182,21 @@
  		}
  		IOLog("SWEET CPU: cpu=%u mpidr=0x%x came alive; SGI1 OK\n",
  		    i, topology->cpus[i].phys_id);
