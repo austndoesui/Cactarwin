@@ -1,0 +1,196 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -92,16 +92,43 @@
+ 	while (*s) {
+ 		sweet_early_putc(*s++);
+ 	}
+ }
+ 
++#if defined(CACTUS)
++/*
++ * Draw only confirmed facts here. LK boot state, CPU count and GIC readiness
++ * must not be fabricated. No dynamic allocation, locks or external console.
++ */
++static void
++cactus_stage52_banner(void)
++{
++    sweet_early_string("\n=== [ Cactarwin / Cactus-XNU ] ===\n");
++    sweet_early_string("PROJECT  Cactarwin (cactus-xnu)\n");
++    sweet_early_string("DEVICE   Xiaomi Redmi 6A (cactus)\n");
++    sweet_early_string("DISPLAY  LK layer1 720x1440\n");
++    sweet_early_string("STATUS   Native XNU startup\n");
++    sweet_early_string("LOADER   XNU Mach-O accepted\n");
++    sweet_early_string("--------------------------------\n");
++}
++#endif
++
+ void
+ sweet_early_mark(unsigned int stage, const char *label)
+ {
++	#if defined(CACTUS)
++	if (early_disabled || stage > 99) {
++#else
+ 	if (early_disabled || stage > 20) {
++#endif
+ 		return;
+ 	}
++#if defined(CACTUS)
++	if (stage == 20) {
++		cactus_stage52_banner();
++	}
++#endif
+ 	uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
+ 	/* Cactus is only 720px wide; the stage bar must not overrun a row. */
+ #if defined(CACTUS)
+ 	if ((stage + 1) * 48 <= EARLY_WIDTH) {
+ #endif
+@@ -113,11 +140,11 @@
+ #if defined(CACTUS)
+ 	}
+ #endif
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ #if defined(CACTUS)
+-	sweet_early_string("CACTUS-XNU-STAGE51 ");
++	sweet_early_string("CACTUS-XNU-STAGE52 ");
+ #else
+ 	sweet_early_string("SWEET EARLY ");
+ #endif
+ 	if (stage >= 10) {
+ 		sweet_early_putc((char)('0' + stage / 10));
+@@ -135,11 +162,11 @@
+ 	if (early_disabled || early_panicking) {
+ 		return;
+ 	}
+ 	early_panicking = 1;
+ #if defined(CACTUS)
+-	sweet_early_string("\nCACTUS-XNU-STAGE51 PANIC: ");
++	sweet_early_string("\nCACTUS-XNU-STAGE52 PANIC: ");
+ #else
+ 	sweet_early_string("\nSWEET EARLY PANIC: ");
+ #endif
+ 	va_list copy;
+ 	va_copy(copy, *args);
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -540,13 +540,18 @@
+ 	const unsigned int serial_exists = serial_init();
+ 	sweet_early_mark(19, "serial_init returned");
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+ 	kprintf("kprintf initialized\n");
+ 	sweet_early_mark(20, "kprintf startup complete");
++	/* Cactus: keep the guaranteed early framebuffer console alive after
++	 * serial registration, including during native panic paths. */
++#if !defined(CACTUS)
+ 	if (serial_exists) {
+ 		sweet_early_disable();
+ 	}
++#endif
++	sweet_early_mark(21, "serial mode setup");
+ 
+ 	serialmode = 0;
+ 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+ 		/* Do we want a serial keyboard and/or console? */
+ 		kprintf("Serial mode specified: %08X\n", serialmode);
+@@ -575,55 +580,76 @@
+ 		serial_set_on_demand(on_demand);
+ 	}
+ 	if (kern_feature_override(KF_SERIAL_OVRD)) {
+ 		serialmode = 0;
+ 	}
++#if defined(CACTUS)
++	/* The framebuffer is the only viable Cactus text output. Keep native
++	 * kprintf routed to its registered serial framebuffer backend. */
++	if (serial_exists) {
++		serialmode |= SERIALMODE_OUTPUT;
++	}
++#endif
++	sweet_early_mark(22, "switching native console");
+ 
+ 	/* Start serial if requested and a serial device was enumerated in serial_init(). */
+ 	if ((serialmode & SERIALMODE_OUTPUT) && serial_exists) {
+ 		serial_console_enabled = true;
+ 		(void)switch_to_serial_console(); /* Switch into serial mode from video console */
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
++	sweet_early_mark(23, "serial output selected");
+ 	PE_create_console();
++	sweet_early_mark(24, "PE_create_console done");
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
++	sweet_early_mark(25, "PE_init_printf done");
+ 
+ #if __arm64__
+ #if DEBUG
+ 	dump_kva_space();
+ #endif
+ #endif
+ 
++	sweet_early_mark(26, "cpu_machine_idle_init enter");
+ 	cpu_machine_idle_init(TRUE);
++	sweet_early_mark(27, "cpu_machine_idle_init done");
+ 
+ 	PE_init_platform(TRUE, &BootCpuData);
++	sweet_early_mark(28, "PE_init_platform late done");
+ 
+ #if __arm64__
+ 	extern bool cpu_config_correct;
+ 	if (!cpu_config_correct) {
+ 		panic("The cpumask=N boot arg cannot be used together with cpus=N, and the boot CPU must be enabled");
+ 	}
+ 
++	sweet_early_mark(29, "ml_map_cpu_pio enter");
+ 	ml_map_cpu_pio();
++	sweet_early_mark(30, "ml_map_cpu_pio returned");
+ 
+ #if APPLE_ARM64_ARCH_FAMILY
+ 	configure_late_apple_regs();
+ #endif
+ 
+ #endif
+ 
++	sweet_early_mark(31, "cpu_timebase_init enter");
+ 	cpu_timebase_init(TRUE);
++	sweet_early_mark(32, "cpu_timebase_init done");
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+ 	kptimer_curcpu_up();
+ #endif /* KPERF */
+ 
++	sweet_early_mark(33, "PE_init_cpu enter");
+ 	PE_init_cpu();
++	sweet_early_mark(34, "PE_init_cpu done");
+ 	fiq_context_init(TRUE);
++	sweet_early_mark(35, "fiq_context_init done");
+ 
+ 
+ #if HIBERNATION
+ 	pal_hib_init();
+ #endif /* HIBERNATION */
+@@ -648,10 +674,11 @@
+ 		panic("%s: Unable to find 'dram-size' entry in the 'chosen' DT node", __FUNCTION__);
+ 	}
+ 
+ 	gDramBase = *dram_base;
+ 	gDramSize = *dram_size;
++	sweet_early_mark(36, "chosen DRAM parsed");
+ 
+ 	/*
+ 	 * Initialize the stack protector for all future calls
+ 	 * to C code. Since kernel_bootstrap() eventually
+ 	 * switches stack context without returning through this
+@@ -661,10 +688,11 @@
+ 	__stack_chk_guard = (unsigned long)early_random();
+ 	/* Zero a byte of the protector to guard
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++	sweet_early_mark(37, "machine_startup enter");
+ 	machine_startup(args);
+ }
+ 
+ /*
+  * Routine:        arm_init_cpu
