@@ -1,0 +1,73 @@
+diff --git a/pexpert/arm/pe_init.c b/pexpert/arm/pe_init.c
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -21,6 +21,10 @@
+ #include <os/overflow.h>
+ 
+ #include <pexpert/arm64/board_config.h>
++#if defined(CACTUS)
++/* The Stage53 fbcon status writer is safe before IOKit matching. */
++extern void fbcon_stage53_progress(const char *message);
++#endif
+ 
+ 
+ /* extern references */
+@@ -378,8 +382,18 @@
+ 	 * against a kernel which has not yet enabled the full set of available
+ 	 * hardware protections.
+ 	 */
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST54 zalloc_iokit_lockdown enter");
++#endif
+ 	zalloc_iokit_lockdown();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST54 zalloc_iokit_lockdown done");
++	fbcon_stage53_progress("ST54 StartIOKitMatching enter");
++#endif
+ 	StartIOKitMatching();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST54 StartIOKitMatching done");
++#endif
+ }
+ 
+ void
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -786,13 +786,26 @@
+ 
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
++#if defined(CACTUS)
++	kernel_bootstrap_thread_log("ST54 PE_lockdown_iokit enter");
++#endif
+ 	PE_lockdown_iokit();
++#if defined(CACTUS)
++	kernel_bootstrap_thread_log("ST54 PE_lockdown_iokit done");
++#endif
+ #endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+ 	 * at the latest
+ 	 */
++#if defined(CACTUS)
++	kernel_bootstrap_thread_log("ST54 vm_set_restrictions enter");
++	kprintf("CACTUS54 machine_info.max_cpus=%d\n", machine_info.max_cpus);
++#endif
+ 	vm_set_restrictions(machine_info.max_cpus);
++#if defined(CACTUS)
++	kernel_bootstrap_thread_log("ST54 vm_set_restrictions done");
++#endif
+ 
+ 
+ #if KPERF
+@@ -803,6 +816,9 @@
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++#if defined(CACTUS)
++	kernel_bootstrap_thread_log("ST54 BSD entry boundary");
++#endif
+ 	kernel_bootstrap_thread_log("bsd_init enter");
+ 	bsd_init();
+ 	kernel_bootstrap_thread_log("bsd_init returned");
