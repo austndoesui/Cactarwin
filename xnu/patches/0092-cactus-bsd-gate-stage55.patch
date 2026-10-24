@@ -1,0 +1,72 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -808,8 +808,24 @@
+ #endif
+ 
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 after VM restrictions");
++#endif
+ #if KPERF
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 KPERF early enter");
++#endif
+ 	kperf_init_early();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 KPERF early done");
++#endif
++#else
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 KPERF disabled");
++#endif
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 before MACH_BSD gate");
+ #endif
+ 
+ 	/*
+@@ -817,11 +833,19 @@
+ 	 */
+ #ifdef  MACH_BSD
+ #if defined(CACTUS)
++	fbcon_stage53_progress("ST55 MACH_BSD enabled");
+ 	kernel_bootstrap_thread_log("ST54 BSD entry boundary");
+ #endif
+ 	kernel_bootstrap_thread_log("bsd_init enter");
+ 	bsd_init();
+ 	kernel_bootstrap_thread_log("bsd_init returned");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 bsd_init returned");
++#endif
++#else
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 MACH_BSD disabled");
++#endif
+ #endif
+ 
+ 
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -486,6 +486,10 @@
+ 	boolean_t       netboot = FALSE;
+ #endif
+ 
++#if defined(CACTUS)
++	extern void fbcon_stage53_progress(const char *);
++	fbcon_stage53_progress("ST55 bsd_init first instruction");
++#endif
+ #if (DEVELOPMENT || DEBUG)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+@@ -507,6 +511,9 @@
+ 	fbcon_stage53_progress("bsd_init: throttle_init");
+ #endif
+ 	throttle_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST55 bsd throttle complete");
++#endif
+ 
+ 	printf(copyright);
+ 
