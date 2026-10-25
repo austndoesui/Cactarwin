@@ -10,7 +10,19 @@
  #define GICR_ISENABLER0                         0x10100
 --- a/pexpert/arm/pe_fiq.c
 +++ b/pexpert/arm/pe_fiq.c
-@@ -58,11 +58,28 @@
+@@ -25,6 +25,11 @@
+ static vm_offset_t gicd_base;
+ static vm_offset_t gicr_base;
+ static vm_offset_t gicr_size;
++#if defined(CACTUS)
++/* Log each redistributor identity outcome just once; find_gicr_pe_base is
++ * called in CPU readiness loops and must not flood the framebuffer. */
++static unsigned int cactus_gicr_diag_bits;
++#endif
+ 
+ static uint32_t
+ _gic_read32(vm_offset_t addr)
+@@ -58,11 +63,32 @@
  
  	for (vm_offset_t offset = 0; offset < gicr_size; offset += GICR_PE_SIZE) {
  		vm_offset_t gicr_pe_base = gicr_base + offset;
@@ -22,8 +34,10 @@
 +        uint32_t pidr2 = gicr_read32(CACTUS_GICR_PIDR2);
 +        uint32_t architecture = (pidr2 >> 4) & 0xfU;
 +        if (architecture != 3U && architecture != 4U) {
-+            kprintf("ST61 bad GICR frame offset=0x%llx pidr2=%x\n",
-+                (unsigned long long)offset, pidr2);
++            if (!(__atomic_fetch_or(&cactus_gicr_diag_bits, 1U, __ATOMIC_RELAXED) & 1U)) {
++                kprintf("ST61 bad GICR frame offset=0x%llx pidr2=%x\n",
++                    (unsigned long long)offset, pidr2);
++            }
 +            continue;
 +        }
 +#endif
@@ -34,15 +48,17 @@
 -			return gicr_pe_base;
 +        if (phys_id == aff_value) {
 +#if defined(CACTUS)
-+            kprintf("ST61 GICR match offset=0x%llx typer=0x%llx pidr2=%x\n",
-+                (unsigned long long)offset, (unsigned long long)gicr_typer,
-+                gicr_read32(CACTUS_GICR_PIDR2));
++            if (!(__atomic_fetch_or(&cactus_gicr_diag_bits, 2U, __ATOMIC_RELAXED) & 2U)) {
++                kprintf("ST61 GICR match offset=0x%llx typer=0x%llx pidr2=%x\n",
++                    (unsigned long long)offset, (unsigned long long)gicr_typer,
++                    gicr_read32(CACTUS_GICR_PIDR2));
++            }
 +#endif
 +            return gicr_pe_base;
  		}
  
  		if (gicr_typer & GICR_TYPER_LAST) {
-@@ -279,7 +296,7 @@
+@@ -279,7 +305,7 @@
          (unsigned long long)gicr_base, (unsigned long long)gicr_pe_base,
          (unsigned long long)__builtin_arm_rsr64("MPIDR_EL1"),
          (unsigned long long)gicr_read64(GICR_TYPER));
@@ -51,7 +67,7 @@
          gicr_read32(0), gicr_read32(GICR_WAKER),
          gicr_read32(GICR_IGROUPR0), gicr_read32(0x10D00),
          gicr_read32(0x10E00), gicr_read32(GICR_ISENABLER0),
-@@ -310,10 +327,16 @@
+@@ -310,10 +336,16 @@
              break;
          }
      }
