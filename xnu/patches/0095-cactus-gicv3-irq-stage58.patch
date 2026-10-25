@@ -1,0 +1,143 @@
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -222,6 +222,74 @@
+ 	__builtin_arm_isb(ISB_SY);
+ #endif /* SWEET */
+ }
++#if defined(CACTUS)
++/* Snapshot deliberately avoids ICC_IAR1: reading that register ACKs an IRQ.
++ * Bits 0..7 are failure conditions; bit 8 says SGI1 is pending in GICR;
++ * bits 32..43 carry the non-acknowledging highest pending INTID. */
++uint64_t
++cactus_gicv3_cpu0_snapshot(void)
++{
++    if (!gicd_base || !gicr_base) {
++        return 1ULL << 63;
++    }
++    vm_offset_t gicr_pe_base = find_gicr_pe_base();
++    uint64_t status = 0;
++    uint64_t daif = __builtin_arm_rsr64("DAIF");
++    uint64_t igrpen = __builtin_arm_rsr64("ICC_IGRPEN1_EL1");
++    uint64_t pmr = __builtin_arm_rsr64("ICC_PMR_EL1");
++    uint64_t sre = __builtin_arm_rsr64("ICC_SRE_EL1");
++    uint64_t hppir = __builtin_arm_rsr64("ICC_HPPIR1_EL1") & 0xFFFULL;
++    uint32_t waker = gicr_read32(GICR_WAKER);
++    uint32_t enabled = gicr_read32(GICR_ISENABLER0);
++    uint32_t pending = gicr_read32(0x10200); /* GICR_ISPENDR0 */
++    uint32_t dctlr = gicd_read32(GICD_CTLR);
++    if (daif & (1ULL << 7)) status |= 1ULL << 0; /* DAIF.I */
++    if (!(igrpen & 1)) status |= 1ULL << 1;
++    if (pmr <= 0xA0) status |= 1ULL << 2;
++    if (!(sre & ICC_SRE_SRE)) status |= 1ULL << 3;
++    if (!(dctlr & (GICD_CTLR_ENABLEGRP1A | GICD_CTLR_ENABLEGRP1))) status |= 1ULL << 4;
++    if (waker & GICR_WAKER_CHILDRENASLEEP) status |= 1ULL << 5;
++    if (!(enabled & (1U << SWEET_IPI_SGI))) status |= 1ULL << 6;
++    if (pending & (1U << SWEET_IPI_SGI)) status |= 1ULL << 8;
++    if (hppir == SWEET_IPI_SGI) status |= 1ULL << 9;
++    return status | (hppir << 32);
++}
++
++/* Re-establish the GICv3 Group-1 NS SGI path on the already-initialized
++ * bootstrap CPU only. Do not change DAIF, other interrupt priorities,
++ * SIGPdisabled, CPU state, or interrupt-context locking. */
++void
++cactus_gicv3_cpu0_rearm(void)
++{
++    if (!gicd_base || !gicr_base) {
++        return;
++    }
++    vm_offset_t gicr_pe_base = find_gicr_pe_base();
++    if (gicr_read32(GICR_WAKER) & GICR_WAKER_PROCESSORSLEEP) {
++        gicr_write32(GICR_WAKER,
++            gicr_read32(GICR_WAKER) & ~GICR_WAKER_PROCESSORSLEEP);
++    }
++    gicr_write32(GICR_IGROUPR0, 0xFFFFFFFFU);
++    gicr_write32(GICR_ISENABLER0, 1U << SWEET_IPI_SGI);
++    if (!(__builtin_arm_rsr64("ICC_SRE_EL1") & ICC_SRE_SRE)) {
++        __builtin_arm_wsr64("ICC_SRE_EL1",
++            __builtin_arm_rsr64("ICC_SRE_EL1") | ICC_SRE_SRE);
++    }
++    if (__builtin_arm_rsr64("ICC_PMR_EL1") <= 0xA0) {
++        __builtin_arm_wsr64("ICC_PMR_EL1", 0xFF);
++    }
++    uint32_t ctlr = gicd_read32(GICD_CTLR);
++    if (!(ctlr & (GICD_CTLR_ENABLEGRP1A | GICD_CTLR_ENABLEGRP1))) {
++        gicd_write32(GICD_CTLR, ctlr | GICD_CTLR_ENABLEGRP1A | GICD_CTLR_ENABLEGRP1);
++    }
++    if (!(__builtin_arm_rsr64("ICC_IGRPEN1_EL1") & 1)) {
++        __builtin_arm_wsr64("ICC_IGRPEN1_EL1", 1);
++    }
++    __builtin_arm_dsb(DSB_SY);
++    __builtin_arm_isb(ISB_SY);
++}
++#endif
++
+ #else
+ void
+ pe_init_fiq()
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -124,6 +124,8 @@
+ #if defined(CACTUS)
+ extern "C" void fbcon_stage53_progress(const char *);
+ extern "C" volatile unsigned int cactus_sgi_observed;
++extern "C" uint64_t cactus_gicv3_cpu0_snapshot(void);
++extern "C" void cactus_gicv3_cpu0_rearm(void);
+ #endif
+ /* Do not wait in a nub's start(): matching can be asynchronous or serialized. */
+ void
+@@ -178,6 +180,7 @@
+ 		nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 		unsigned int retries = 0;
+ 		bool noted_init = false, noted_sgi = false, noted_delivery = false;
++		bool noted_gic = false;
+ 		for (;;) {
+ 			bool initialized = __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) != 0;
+ 			bool signal_ready = sweet_cpu_signal_is_enabled(i);
+@@ -197,18 +200,43 @@
+ 				fbcon_stage53_progress("ST57 CPU0 SGI IRQ seen");
+ 				noted_delivery = true;
+ 			}
++			if (i == topology->boot_cpu->cpu_id && initialized &&
++			    !signal_ready && !noted_gic) {
++				uint64_t state = cactus_gicv3_cpu0_snapshot();
++				IOLog("CACTUS GICv3 pre-rearm status=0x%llx irq_seen=%u\n",
++				    (unsigned long long)state, seen);
++				fbcon_stage53_progress((state & 1) ? "ST58 CPU0 IRQ MASKED" :
++				    (state & 2) ? "ST58 GIC CPU1 OFF" :
++				    (state & 4) ? "ST58 GIC PMR BLOCK" :
++				    (state & 0x20) ? "ST58 REDIST ASLEEP" :
++				    (state & 0x40) ? "ST58 SGI1 DISABLED" :
++				    (state & 0x100) ? "ST58 SGI1 PENDING" :
++				    "ST58 SGI1 NOT PENDING");
++				noted_gic = true;
++			}
+ 			uint64_t now = mach_absolute_time();
+ 			if (now > deadline) {
+ 				fbcon_stage53_progress(!initialized ? "ST57 CPU0 INIT timeout" :
+ 				    (!seen ? "ST57 CPU0 NO SGI timeout" : "ST57 CPU0 SIGNAL timeout"));
+ 				IOLog("CACTUS CPU %u: initialized=%u signal_ready=%u sgi_seen=%u retries=%u\n",
+ 				    i, initialized, signal_ready, seen, retries);
++				if (i == topology->boot_cpu->cpu_id) {
++					uint64_t state = cactus_gicv3_cpu0_snapshot();
++					IOLog("CACTUS GICv3 timeout status=0x%llx IRQs=%u\n",
++					    (unsigned long long)state, seen);
++					fbcon_stage53_progress((state & 1) ? "ST58 TIMEOUT IRQ MASK" :
++					    (state & 0x100) ? "ST58 TIMEOUT SGI PENDING" :
++					    seen ? "ST58 TIMEOUT SIGNAL FLAG" :
++					    "ST58 TIMEOUT SGI ABSENT");
++				}
+ 				panic("CACTUS CPU%u readiness timeout (init/IRQ/SGI)", i);
+ 			}
+ 			if (i == topology->boot_cpu->cpu_id && initialized && !signal_ready &&
+ 			    retries < 3 && now >= retry_at) {
+-				fbcon_stage53_progress("ST57 CPU0 resend SGI");
++				fbcon_stage53_progress("ST58 GICv3 rearm SGI1");
++				cactus_gicv3_cpu0_rearm();
+ 				cpu->signalCPU(cpu);
++				fbcon_stage53_progress("ST58 CPU0 SGI1 retried");
+ 				retries++;
+ 				nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 			}
