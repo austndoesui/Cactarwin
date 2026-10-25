@@ -1,0 +1,106 @@
+--- a/pexpert/pexpert/arm64/CACTUS.h
++++ b/pexpert/pexpert/arm64/CACTUS.h
+@@ -74,6 +74,7 @@
+ #define GICD_CTLR_RWP             0x80000000
+ 
+ #define GICR_TYPER                              0x08
++#define CACTUS_GICR_PIDR2                      0xffe8 // GICR ID register
+ #define GICR_WAKER                              0x14
+ #define GICR_IGROUPR0                           0x10080
+ #define GICR_ISENABLER0                         0x10100
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -58,11 +58,28 @@
+ 
+ 	for (vm_offset_t offset = 0; offset < gicr_size; offset += GICR_PE_SIZE) {
+ 		vm_offset_t gicr_pe_base = gicr_base + offset;
+-		uint64_t gicr_typer = gicr_read64(GICR_TYPER);
++#if defined(CACTUS)
++        /* A zero-filled or incorrectly mapped GICR frame has affinity 0.
++         * Without this check CPU0 falsely accepts it and all SGI enable
++         * writes disappear. Verify the architected GICv3/v4 PIDR2 first. */
++        uint32_t pidr2 = gicr_read32(CACTUS_GICR_PIDR2);
++        uint32_t architecture = (pidr2 >> 4) & 0xfU;
++        if (architecture != 3U && architecture != 4U) {
++            kprintf("ST61 bad GICR frame offset=0x%llx pidr2=%x\n",
++                (unsigned long long)offset, pidr2);
++            continue;
++        }
++#endif
++        uint64_t gicr_typer = gicr_read64(GICR_TYPER);
+ 		uint32_t aff_value = (uint32_t) (gicr_typer >> GICR_TYPER_AFFINITY_VALUE_SHIFT) & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);
+ 
+-		if (phys_id == aff_value) {
+-			return gicr_pe_base;
++        if (phys_id == aff_value) {
++#if defined(CACTUS)
++            kprintf("ST61 GICR match offset=0x%llx typer=0x%llx pidr2=%x\n",
++                (unsigned long long)offset, (unsigned long long)gicr_typer,
++                gicr_read32(CACTUS_GICR_PIDR2));
++#endif
++            return gicr_pe_base;
+ 		}
+ 
+ 		if (gicr_typer & GICR_TYPER_LAST) {
+@@ -279,7 +296,7 @@
+         (unsigned long long)gicr_base, (unsigned long long)gicr_pe_base,
+         (unsigned long long)__builtin_arm_rsr64("MPIDR_EL1"),
+         (unsigned long long)gicr_read64(GICR_TYPER));
+-    kprintf("ST60 GICR pre: ctlr=%x waker=%x group=%x mod=%x nsacr=%x enable=%x pending=%x\n",
++    kprintf("ST61 GICR pre: ctlr=%x waker=%x group=%x mod=%x nsacr=%x enable=%x pending=%x\n",
+         gicr_read32(0), gicr_read32(GICR_WAKER),
+         gicr_read32(GICR_IGROUPR0), gicr_read32(0x10D00),
+         gicr_read32(0x10E00), gicr_read32(GICR_ISENABLER0),
+@@ -310,10 +327,16 @@
+             break;
+         }
+     }
+-    kprintf("ST60 GICR post: ctlr=%x group=%x mod=%x enable=%x pending=%x\n",
++    kprintf("ST61 GICR post: ctlr=%x group=%x mod=%x enable=%x pending=%x\n",
+         gicr_read32(0), gicr_read32(GICR_IGROUPR0),
+         gicr_read32(0x10D00), gicr_read32(GICR_ISENABLER0),
+         gicr_read32(0x10200));
++    uint32_t enable_after = gicr_read32(GICR_ISENABLER0);
++    uint32_t sgi = 1U << SWEET_IPI_SGI;
++    uint32_t timer = 1U << sweet_vtimer_intid;
++    kprintf("ST61 GICR enable result: SGI=%u PPI=%u id=%x group=%x\n",
++        !!(enable_after & sgi), !!(enable_after & timer),
++        gicr_read32(CACTUS_GICR_PIDR2), gicr_read32(GICR_IGROUPR0));
+     if (!(__builtin_arm_rsr64("ICC_SRE_EL1") & ICC_SRE_SRE)) {
+         __builtin_arm_wsr64("ICC_SRE_EL1",
+             __builtin_arm_rsr64("ICC_SRE_EL1") | ICC_SRE_SRE);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -225,7 +225,9 @@
+ 					uint64_t state = cactus_gicv3_cpu0_snapshot();
+ 					IOLog("CACTUS GICv3 timeout status=0x%llx IRQs=%u\n",
+ 					    (unsigned long long)state, seen);
+-					fbcon_stage53_progress((state & 1) ? "ST58 TIMEOUT IRQ MASK" :
++	                fbcon_stage53_progress((state & 0x40) ?
++                    "ST61 TIMEOUT SGI8 DISABLED" :
++                    (state & 1) ? "ST61 TIMEOUT IRQ MASK" :
+ 					    (state & 0x100) ? "ST58 TIMEOUT SGI PENDING" :
+ 					    seen ? "ST58 TIMEOUT SIGNAL FLAG" :
+ 					    "ST58 TIMEOUT SGI ABSENT");
+@@ -237,13 +239,17 @@
+ 				fbcon_stage53_progress("ST60 rearm SGI8");
+ 				cactus_gicv3_cpu0_rearm();
+ 				uint64_t after = cactus_gicv3_cpu0_snapshot();
+-				IOLog("ST60 GIC SGI8 rearm status=0x%llx\n",
++				IOLog("ST61 GIC SGI8 rearm status=0x%llx\n",
+ 				    (unsigned long long)after);
+ 				fbcon_stage53_progress((after & 0x40) ?
+-				    "ST60 SGI8 enable blocked" :
+-				    "ST60 SGI8 enabled");
++				    "ST61 SGI8 ENABLE WRITE LOST" :
++				    "ST61 SGI8 ENABLE OK");
+ 				cpu->signalCPU(cpu);
+-				fbcon_stage53_progress("ST60 SGI8 sent");
++                /* Preserve the outcome in STATUS even after sending:
++                 * a successful ICC_SGI1R write does not prove delivery. */
++                fbcon_stage53_progress((after & 0x40) ?
++                    "ST61 SGI8 SENT, ENABLE=0" :
++                    "ST61 SGI8 SENT, ENABLE=1");
+ 				retries++;
+ 				nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 			}
