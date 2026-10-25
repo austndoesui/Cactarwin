@@ -1,0 +1,114 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1847,6 +1847,10 @@
+ 	__builtin_unreachable();
+ }
+ 
++#if defined(CACTUS)
++/* IRQ observer; read by the CPU startup thread, never a control bit. */
++volatile unsigned int cactus_sgi_observed;
++#endif
+ void
+ sleh_irq(arm_saved_state_t *state)
+ {
+@@ -1875,6 +1879,11 @@
+ 		INTERRUPT_MASKED_DEBUG_END();
+ 		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+ 	} else if (intid < 16) {
++#if defined(CACTUS)
++		if (intid == SWEET_IPI_SGI) {
++			__atomic_add_fetch(&cactus_sgi_observed, 1U, __ATOMIC_RELAXED);
++		}
++#endif
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
+ 		/* Ack before handling so an IPI raised meanwhile is not lost */
+ 		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -123,6 +123,7 @@
+ 
+ #if defined(CACTUS)
+ extern "C" void fbcon_stage53_progress(const char *);
++extern "C" volatile unsigned int cactus_sgi_observed;
+ #endif
+ /* Do not wait in a nub's start(): matching can be asynchronous or serialized. */
+ void
+@@ -169,14 +170,47 @@
+ #if defined(CACTUS)
+ 		fbcon_stage53_progress("ST56 CPU processor_start done");
+ #endif
+-		/* processor_start() is asynchronous for secondaries in this XNU. */
++		/* Check CPU initialization and IRQ delivery independently.  A lost
++		 * initial self-SGI can safely be retried once CPU0 is initialized.
++		 * Never fake SIGPdisabled or mark an uninitialized CPU ready. */
+ 		nanoseconds_to_deadline(5 * NSEC_PER_SEC, &deadline);
+-		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
+-		    !sweet_cpu_signal_is_enabled(i)) {
+-			if (mach_absolute_time() > deadline) {
+-				IOLog("SWEET CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
+-				    i, topology->cpus[i].phys_id);
+-				panic("SWEET CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
++		uint64_t retry_at;
++		nanoseconds_to_deadline(250000000ULL, &retry_at);
++		unsigned int retries = 0;
++		bool noted_init = false, noted_sgi = false, noted_delivery = false;
++		for (;;) {
++			bool initialized = __atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) != 0;
++			bool signal_ready = sweet_cpu_signal_is_enabled(i);
++			unsigned int seen = __atomic_load_n(&cactus_sgi_observed, __ATOMIC_RELAXED);
++			if (initialized && signal_ready) {
++				fbcon_stage53_progress("ST57 CPU0 init and IRQ OK");
++				break;
++			}
++			if (!initialized && !noted_init) {
++				fbcon_stage53_progress("ST57 CPU0 init pending");
++				noted_init = true;
++			} else if (initialized && !signal_ready && !noted_sgi) {
++				fbcon_stage53_progress("ST57 CPU0 SGI pending");
++				noted_sgi = true;
++			}
++			if (seen && !noted_delivery) {
++				fbcon_stage53_progress("ST57 CPU0 SGI IRQ seen");
++				noted_delivery = true;
++			}
++			uint64_t now = mach_absolute_time();
++			if (now > deadline) {
++				fbcon_stage53_progress(!initialized ? "ST57 CPU0 INIT timeout" :
++				    (!seen ? "ST57 CPU0 NO SGI timeout" : "ST57 CPU0 SIGNAL timeout"));
++				IOLog("CACTUS CPU %u: initialized=%u signal_ready=%u sgi_seen=%u retries=%u\n",
++				    i, initialized, signal_ready, seen, retries);
++				panic("CACTUS CPU%u readiness timeout (init/IRQ/SGI)", i);
++			}
++			if (i == topology->boot_cpu->cpu_id && initialized && !signal_ready &&
++			    retries < 3 && now >= retry_at) {
++				fbcon_stage53_progress("ST57 CPU0 resend SGI");
++				cpu->signalCPU(cpu);
++				retries++;
++				nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 			}
+ 			IOSleep(1);
+ 		}
+@@ -222,12 +256,21 @@
+ 	/* Secondary startup runs at splsched: queue the self-IPI and return.
+ 	 * startAll waits for its delivery after the startup thread unmasks IRQs.
+ 	 * Waiting here with DAIF.I set would deadlock every secondary. */
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST57 CPU initCPU reached");
++#endif
+ 	signalCPU(this);
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST57 CPU self SGI sent");
++#endif
+ 	setCPUState(kIOCPUStateRunning);
+ 	kprintf("SWEET CPU: cpu=%u entered initCPU mpidr=0x%llx EL%llu IRQs=%u\n",
+ 	    getCPUNumber(), __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL,
+ 	    __builtin_arm_rsr64("CurrentEL") >> 2, ml_get_interrupts_enabled());
+ 	__atomic_store_n(&initialized, 1, __ATOMIC_RELEASE);
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST57 CPU initCPU complete");
++#endif
+ }
+ 
+ void
