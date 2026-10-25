@@ -1,0 +1,86 @@
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -176,8 +176,9 @@
+ 		 * initial self-SGI can safely be retried once CPU0 is initialized.
+ 		 * Never fake SIGPdisabled or mark an uninitialized CPU ready. */
+ 		nanoseconds_to_deadline(5 * NSEC_PER_SEC, &deadline);
+-		uint64_t retry_at;
+-		nanoseconds_to_deadline(250000000ULL, &retry_at);
++		/* First retry must happen immediately: IOSleep and timed waits
++		 * can never wake while CPU0's interrupt source is disabled. */
++		uint64_t retry_at = mach_absolute_time();
+ 		unsigned int retries = 0;
+ 		bool noted_init = false, noted_sgi = false, noted_delivery = false;
+ 		bool noted_gic = false;
+@@ -233,14 +234,27 @@
+ 			}
+ 			if (i == topology->boot_cpu->cpu_id && initialized && !signal_ready &&
+ 			    retries < 3 && now >= retry_at) {
+-				fbcon_stage53_progress("ST58 GICv3 rearm SGI1");
++				fbcon_stage53_progress("ST59 GIC SGI1 rearm");
+ 				cactus_gicv3_cpu0_rearm();
++				uint64_t after = cactus_gicv3_cpu0_snapshot();
++				IOLog("ST59 GIC SGI after rearm status=0x%llx\n",
++				    (unsigned long long)after);
++				fbcon_stage53_progress((after & 0x40) ?
++				    "ST59 SGI1 enable not latched" :
++				    "ST59 SGI1 enabled");
+ 				cpu->signalCPU(cpu);
+-				fbcon_stage53_progress("ST58 CPU0 SGI1 retried");
++				fbcon_stage53_progress("ST59 SGI1 sent");
+ 				retries++;
+ 				nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 			}
+-			IOSleep(1);
++			if (i == topology->boot_cpu->cpu_id && initialized && !signal_ready) {
++				/* A missing GIC timer IRQ makes IOSleep a deadlock. Use the
++				 * counter-backed short busy wait until SGI1 arrives or
++				 * the existing bounded timeout reports the fault. */
++				IODelay(100);
++			} else {
++				IOSleep(1);
++			}
+ 		}
+ 		IOLog("SWEET CPU: cpu=%u mpidr=0x%x came alive; SGI1 OK\n",
+ 		    i, topology->cpus[i].phys_id);
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -176,6 +176,14 @@
+ 		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
+ 	}
+ 	gicr_write32(GICR_ISENABLER0, (1U << sweet_vtimer_intid) | (1U << SWEET_IPI_SGI));
++#if defined(CACTUS)
++	/* Cactus SGI1 was observed disabled at the first Stage58 snapshot.
++	 * Read back after the GICR write to separate a failed enable
++	 * (security/redistributor) from later priority/masking failures. */
++	__builtin_arm_dsb(DSB_SY);
++	kprintf("ST59 GICR after pe_init enable=0x%x wake=0x%x\n",
++	    gicr_read32(GICR_ISENABLER0), gicr_read32(GICR_WAKER));
++#endif
+ #else
+ 	// Configure timers and legacy FIQ to be group 0
+ 	gicr_write32(GICR_IGROUPR0, 0x81FFFFFF);
+@@ -269,8 +277,21 @@
+         gicr_write32(GICR_WAKER,
+             gicr_read32(GICR_WAKER) & ~GICR_WAKER_PROCESSORSLEEP);
+     }
++	/* The redistributor wake is asynchronous; wait before touching
++	 * SGI-frame registers. Bound it so a broken GIC cannot hang. */
++    uint64_t wake_deadline;
++    nanoseconds_to_deadline(10000000ULL, &wake_deadline);
++    while (gicr_read32(GICR_WAKER) & GICR_WAKER_CHILDRENASLEEP) {
++        if (mach_absolute_time() > wake_deadline) {
++            kprintf("ST59 GICR wake timeout\n");
++            return;
++        }
++    }
+     gicr_write32(GICR_IGROUPR0, 0xFFFFFFFFU);
+     gicr_write32(GICR_ISENABLER0, 1U << SWEET_IPI_SGI);
++    __builtin_arm_dsb(DSB_SY);
++    kprintf("ST59 SGI enable readback=0x%x\n",
++        gicr_read32(GICR_ISENABLER0));
+     if (!(__builtin_arm_rsr64("ICC_SRE_EL1") & ICC_SRE_SRE)) {
+         __builtin_arm_wsr64("ICC_SRE_EL1",
+             __builtin_arm_rsr64("ICC_SRE_EL1") | ICC_SRE_SRE);
