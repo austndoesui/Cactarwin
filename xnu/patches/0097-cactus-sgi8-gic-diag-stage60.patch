@@ -1,0 +1,89 @@
+diff --git a/pexpert/pexpert/arm64/CACTUS.h b/pexpert/pexpert/arm64/CACTUS.h
+--- a/pexpert/pexpert/arm64/CACTUS.h
++++ b/pexpert/pexpert/arm64/CACTUS.h
+@@ -58,7 +58,7 @@
+  */
+ #define CACTUS_VTIMER_INTID       27
+ #define SWEET_VTIMER_INTID        CACTUS_VTIMER_INTID
+-#define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
++#define SWEET_IPI_SGI             8       // CACTUS Stage60: test NS SGI8 (SGI1 enable was RAZ/WI)
+ 
+ #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+ 
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -181,7 +181,7 @@
+ 	 * Read back after the GICR write to separate a failed enable
+ 	 * (security/redistributor) from later priority/masking failures. */
+ 	__builtin_arm_dsb(DSB_SY);
+-	kprintf("ST59 GICR after pe_init enable=0x%x wake=0x%x\n",
++	kprintf("ST60 GICR init enable=0x%x wake=0x%x\n",
+ 	    gicr_read32(GICR_ISENABLER0), gicr_read32(GICR_WAKER));
+ #endif
+ #else
+@@ -273,6 +273,17 @@
+         return;
+     }
+     vm_offset_t gicr_pe_base = find_gicr_pe_base();
++    /* Non-acknowledging GICv3 diagnostics on the actual CPU0 redistributor.
++     * Read-only security group registers. Do not touch EL3-owned policy. */
++    kprintf("ST60 GICR base=0x%llx pe=0x%llx mpidr=0x%llx typer=0x%llx\n",
++        (unsigned long long)gicr_base, (unsigned long long)gicr_pe_base,
++        (unsigned long long)__builtin_arm_rsr64("MPIDR_EL1"),
++        (unsigned long long)gicr_read64(GICR_TYPER));
++    kprintf("ST60 GICR pre: ctlr=%x waker=%x group=%x mod=%x nsacr=%x enable=%x pending=%x\n",
++        gicr_read32(0), gicr_read32(GICR_WAKER),
++        gicr_read32(GICR_IGROUPR0), gicr_read32(0x10D00),
++        gicr_read32(0x10E00), gicr_read32(GICR_ISENABLER0),
++        gicr_read32(0x10200));
+     if (gicr_read32(GICR_WAKER) & GICR_WAKER_PROCESSORSLEEP) {
+         gicr_write32(GICR_WAKER,
+             gicr_read32(GICR_WAKER) & ~GICR_WAKER_PROCESSORSLEEP);
+@@ -290,8 +301,19 @@
+     gicr_write32(GICR_IGROUPR0, 0xFFFFFFFFU);
+     gicr_write32(GICR_ISENABLER0, 1U << SWEET_IPI_SGI);
+     __builtin_arm_dsb(DSB_SY);
+-    kprintf("ST59 SGI enable readback=0x%x\n",
+-        gicr_read32(GICR_ISENABLER0));
++    /* Linux waits for GICR_CTLR.RWP following SGI-frame programming. */
++    uint64_t rwp_deadline;
++    nanoseconds_to_deadline(10000000ULL, &rwp_deadline);
++    while (gicr_read32(0) & (1U << 3)) {
++        if (mach_absolute_time() > rwp_deadline) {
++            kprintf("ST60 GICR RWP timeout\n");
++            break;
++        }
++    }
++    kprintf("ST60 GICR post: ctlr=%x group=%x mod=%x enable=%x pending=%x\n",
++        gicr_read32(0), gicr_read32(GICR_IGROUPR0),
++        gicr_read32(0x10D00), gicr_read32(GICR_ISENABLER0),
++        gicr_read32(0x10200));
+     if (!(__builtin_arm_rsr64("ICC_SRE_EL1") & ICC_SRE_SRE)) {
+         __builtin_arm_wsr64("ICC_SRE_EL1",
+             __builtin_arm_rsr64("ICC_SRE_EL1") | ICC_SRE_SRE);
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -234,16 +234,16 @@
+ 			}
+ 			if (i == topology->boot_cpu->cpu_id && initialized && !signal_ready &&
+ 			    retries < 3 && now >= retry_at) {
+-				fbcon_stage53_progress("ST59 GIC SGI1 rearm");
++				fbcon_stage53_progress("ST60 rearm SGI8");
+ 				cactus_gicv3_cpu0_rearm();
+ 				uint64_t after = cactus_gicv3_cpu0_snapshot();
+-				IOLog("ST59 GIC SGI after rearm status=0x%llx\n",
++				IOLog("ST60 GIC SGI8 rearm status=0x%llx\n",
+ 				    (unsigned long long)after);
+ 				fbcon_stage53_progress((after & 0x40) ?
+-				    "ST59 SGI1 enable not latched" :
+-				    "ST59 SGI1 enabled");
++				    "ST60 SGI8 enable blocked" :
++				    "ST60 SGI8 enabled");
+ 				cpu->signalCPU(cpu);
+-				fbcon_stage53_progress("ST59 SGI1 sent");
++				fbcon_stage53_progress("ST60 SGI8 sent");
+ 				retries++;
+ 				nanoseconds_to_deadline(250000000ULL, &retry_at);
+ 			}
