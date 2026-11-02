@@ -1,0 +1,51 @@
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -61,6 +61,11 @@
+ 	// We only care about aff1 and aff0
+ 	uint32_t phys_id = __builtin_arm_rsr64("MPIDR_EL1") & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);
+ 
++#if defined(CACTUS)
++    kprintf("ST63 scan mpidr=%llx gicr_va=%llx bytes=%llx\n",
++        (unsigned long long)__builtin_arm_rsr64("MPIDR_EL1"),
++        (unsigned long long)gicr_base, (unsigned long long)gicr_size);
++#endif
+ 	for (vm_offset_t offset = 0; offset < gicr_size; offset += GICR_PE_SIZE) {
+ 		vm_offset_t gicr_pe_base = gicr_base + offset;
+ #if defined(CACTUS)
+@@ -69,6 +74,10 @@
+          * writes disappear. Verify the architected GICv3/v4 PIDR2 first. */
+         uint32_t pidr2 = gicr_read32(CACTUS_GICR_PIDR2);
+         uint32_t architecture = (pidr2 >> 4) & 0xfU;
++        uint64_t stage63_typer = gicr_read64(GICR_TYPER);
++        kprintf("ST63 frame off=%llx pidr2=%x typer=%llx affinity=%x\n",
++            (unsigned long long)offset, pidr2,
++            (unsigned long long)stage63_typer, (unsigned)(stage63_typer >> 32));
+         if (architecture != 3U && architecture != 4U) {
+             if (!(__atomic_fetch_or(&cactus_gicr_diag_bits, 1U, __ATOMIC_RELAXED) & 1U)) {
+                 kprintf("ST61 bad GICR frame offset=0x%llx pidr2=%x\n",
+@@ -152,6 +161,14 @@
+ 		uint64_t const gicr_base_prop = ((uint64_t const *) prop)[2];
+ 		uint64_t const gicr_size_prop = ((uint64_t const *) prop)[3];
+ 
++#if defined(CACTUS)
++        kprintf("ST63 ADT soc=%llx gicd_off=%llx gicr_off=%llx gicr_pa=%llx size=%llx\n",
++            (unsigned long long)soc_base_phys,
++            (unsigned long long)gicd_base_prop,
++            (unsigned long long)gicr_base_prop,
++            (unsigned long long)(soc_base_phys + gicr_base_prop),
++            (unsigned long long)gicr_size_prop);
++#endif
+ 		// Find GICD base address
+ 		gicd_base = ml_io_map(soc_base_phys + gicd_base_prop, gicd_size_prop);
+ 
+@@ -166,6 +183,10 @@
+ 			panic("%s: cannot map GICR region", __func__);
+ 		}
+ 
++#if defined(CACTUS)
++        kprintf("ST63 GIC mapped gicd_va=%llx gicr_va=%llx\n",
++            (unsigned long long)gicd_base, (unsigned long long)gicr_base);
++#endif
+ 		gicr_size = gicr_size_prop;
+ 	}
+ 
