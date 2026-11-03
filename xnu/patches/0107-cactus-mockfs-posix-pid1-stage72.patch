@@ -1,0 +1,62 @@
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -110,6 +110,8 @@
+ 		 */
+ 
++#if !defined(CACTUS)
+ 		held_char = cnp->cn_nameptr[cnp->cn_namelen];
+ 		cnp->cn_nameptr[cnp->cn_namelen] = '\0';
++#endif
+ 
+ 		/*
+@@ -118,9 +120,21 @@
+ 		 *   here, as mockfs doesn't current use names; just unique types.
+ 		 */
++#if defined(CACTUS)
++		if (cnp->cn_namelen == 4 && !memcmp(cnp->cn_nameptr, "sbin", 4)) {
++#else
+ 		if (!strncmp(cnp->cn_nameptr, "sbin", 5)) {
++#endif
+ 			target_fsnode = fsnode;
++#if defined(CACTUS)
++		} else if (cnp->cn_namelen == 3 && !memcmp(cnp->cn_nameptr, "dev", 3)) {
++#else
+ 		} else if (!strncmp(cnp->cn_nameptr, "dev", 4)) {
++#endif
+ 			mockfs_fsnode_child_by_type(fsnode, MOCKFS_DEV, &target_fsnode);
++#if defined(CACTUS)
++		} else if (cnp->cn_namelen == 7 && !memcmp(cnp->cn_nameptr, "launchd", 7)) {
++#else
+ 		} else if (!strncmp(cnp->cn_nameptr, "launchd", 8)) {
++#endif
+ 			mockfs_fsnode_child_by_type(fsnode, MOCKFS_FILE, &target_fsnode);
+ 		} else {
+@@ -128,5 +142,7 @@
+ 		}
+ 
++#if !defined(CACTUS)
+ 		cnp->cn_nameptr[cnp->cn_namelen] = held_char;
++#endif
+ 
+ 		if (target_fsnode) {
+@@ -174,7 +190,19 @@
+ 	fsnode = (mockfs_fsnode_t)vp->v_data;
+ 	vap = ap->a_vap;
++#if !defined(CACTUS)
+ 	bzero(vap, sizeof(*vap));
++#endif
++	/* CACTUS retains va_active requested by the VFS caller. Clearing the
++	 * entire vnode_attr makes even successfully returned attributes invalid. */
+ 	VATTR_RETURN(vap, va_nlink, 1); /* Simply assert that someone has at least one link to us */
++#if defined(CACTUS)
++	/* Report POSIX file type and permissions, not VFS access masks.
++	 * A regular executable must have execute bits for execve. */
++	VATTR_RETURN(vap, va_mode, fsnode->type == MOCKFS_FILE ?
++	    (S_IFREG | S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) :
++	    (S_IFDIR | S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH));
++#else
+ 	VATTR_RETURN(vap, va_mode, VREAD | VWRITE | VEXEC);
++#endif
+ 	VATTR_RETURN(vap, va_fileid, fsnode->type);
+ 	VATTR_RETURN(vap, va_total_size, fsnode->size);
