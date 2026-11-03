@@ -97,18 +97,6 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  	}
-@@ -1052,4 +1106,11 @@
- 
-+#if defined(CACTUS)
-+	fbcon_stage53_progress("ST68 PID1 clone enter");
-+#endif
- 	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
- 	bsd_utaskbootstrap();
-+#if defined(CACTUS)
-+	fbcon_stage53_progress("ST68 PID1 clone done");
-+#endif
-+
- 
 @@ -1096,2 +1157,6 @@
  	vm_init_before_launchd();
 +#if defined(CACTUS)
