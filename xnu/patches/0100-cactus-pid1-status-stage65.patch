@@ -1,0 +1,79 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -774,6 +774,9 @@ fbcon_init(void)
+ 	for (uint32_t r = 0; r < fbcon_rows; r++) {
+ 		fbcon_clear_row(r);
+ 	}
+ #if defined(CACTUS)
++	/* Reserve the final 16-pixel row for the persistent PID1 indicator;
++	 * it must never be cleared by normal log scrolling. */
++	fbcon_rows--;
+ 	if (fbcon_rows > FBCON_HEADER_ROWS + 4) {
+ 		fbcon_literal("=== [ Cactarwin / Cactus-XNU ] ===\n");
+@@ -830,3 +834,40 @@ fbcon_transmit_data(uint8_t c)
+ #if defined(CACTUS)
++/* Amber = kernel booting. Green only after an actual PID1 syscall. */
++static uint32_t cactus_pid1_bar_state;
++static void
++cactus_pid1_bar_draw(void)
++{
++	if (fbcon_base == NULL || fbcon_log_first_row != FBCON_HEADER_ROWS ||
++	    fbcon_rows == 0) {
++		return;
++	}
++	const uint32_t y0 = fbcon_rows * 16u * FBCON_SCALE;
++	const uint32_t color = cactus_pid1_bar_state == 2u ?
++	    0xff168c43u : 0xffb36a15u;
++	for (uint32_t y = y0; y < y0 + 16u * FBCON_SCALE && y < fbcon_height; ++y) {
++		volatile uint32_t *line = fbcon_base + y * (fbcon_stride / 4u);
++		for (uint32_t x = 0; x < fbcon_width; ++x) {
++			line[x] = color;
++		}
++	}
++	const uint32_t save_row = fbcon_row, save_col = fbcon_col;
++	fbcon_row = fbcon_rows;
++	fbcon_col = 1;
++	fbcon_literal(cactus_pid1_bar_state == 2u ?
++	    "PID1 RUNNING - user syscall verified" :
++	    "PID1 WAITING - BSD/root/exec pending");
++	fbcon_row = save_row;
++	fbcon_col = save_col;
++}
++
++void
++fbcon_stage65_pid1_running(void)
++{
++	if (cactus_pid1_bar_state != 2u) {
++		cactus_pid1_bar_state = 2u;
++		cactus_pid1_bar_draw();
++	}
++}
++
+ /*
+  * Update the fixed status line without allocating, printing or taking a
+@@ -841,4 +879,8 @@ fbcon_stage53_progress(const char *message)
+     if (fbcon_base == NULL || fbcon_log_first_row != FBCON_HEADER_ROWS) {
+         return;
+     }
++    if (cactus_pid1_bar_state == 0u) {
++        cactus_pid1_bar_state = 1u;
++        cactus_pid1_bar_draw();
++    }
+     const uint32_t old_row = fbcon_row, old_col = fbcon_col;
+diff --git a/bsd/kern/kern_prot.c b/bsd/kern/kern_prot.c
+--- a/bsd/kern/kern_prot.c
++++ b/bsd/kern/kern_prot.c
+@@ -155,4 +155,12 @@ getpid(proc_t p, __unused struct getpid_args *uap, int32_t *retval)
+ {
+ 	*retval = proc_getpid(p);
++#if defined(CACTUS)
++	/* User-mode PID1 has reached XNU's syscall dispatcher. This is
++	 * stronger proof than merely allocating the initproc PCB. */
++	if (*retval == 1) {
++		extern void fbcon_stage65_pid1_running(void);
++		fbcon_stage65_pid1_running();
++	}
++#endif
+ 	return 0;
+ }
