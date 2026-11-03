@@ -11,7 +11,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 + * the unbacked user VA.  These are genuine PID1 argument bytes for execve. */
 +/* The low-level ARM pmap helpers are private to XNU's pmap headers. */
 +extern ppnum_t pmap_find_phys(void *, uint64_t);
-+extern vm_map_address_t phystokv(pmap_paddr_t);
++extern vm_map_address_t phystokv(uint64_t);
 +
 +static kern_return_t
 +cactus_pid1_copy_to_map(vm_map_t map, proc_t p, vm_map_address_t dst,
