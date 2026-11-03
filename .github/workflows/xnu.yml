@@ -130,6 +130,7 @@ jobs:
               '0102-cactus-visible-bar-vfs-stage67.patch',
               '0103-cactus-bsd-root-pid1-stage68.patch',
               '0104-cactus-bsd-root-pid1-stage69.patch',
+              '0105-cactus-minimal-pid1-stage70.patch',
           )
           failures = []
           for name in required:

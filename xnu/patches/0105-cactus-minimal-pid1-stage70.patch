@@ -1,0 +1,69 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -892,5 +892,11 @@
+ #endif
++#if defined(CACTUS)
++	/* Minimal root/PID1 diagnostic profile: Skywalk nexus and packet channels
++	 * have no users yet. Preserve compiled implementation for normal builds. */
++	fbcon_stage53_progress("ST70 Skywalk deferred");
++#else
+ 	(void) skywalk_init();
+-#if defined(CACTUS)
+-	fbcon_stage53_progress("ST69 skywalk init done");
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST70 Skywalk bypass complete");
+ #endif
+@@ -898,3 +904,3 @@
+ #endif /* SKYWALK */
+-#if NETWORKING
++#if NETWORKING && !defined(CACTUS)
+ #if NECP
+@@ -955,2 +961,5 @@
+ #endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST70 BSD core ready");
++#endif
+ 	bsd_init_kprintf("calling bsd_autoconf\n");
+@@ -973,2 +982,3 @@
+ #if NLOOP > 0
++#if !defined(CACTUS)
+ 	bsd_init_kprintf("calling loopattach\n");
+@@ -976,5 +986,8 @@
+ #endif
++#endif
+ #if NGIF
+ 	/* Initialize gif interface (after lo0) */
++#if !defined(CACTUS)
+ 	gif_init();
++#endif
+ #endif
+@@ -983,3 +996,5 @@
+ 	/* Initialize packet filter log interface */
++#if !defined(CACTUS)
+ 	pfloginit();
++#endif
+ #endif /* PFLOG */
+@@ -989,6 +1004,8 @@
+ 	bsd_init_kprintf("calling ether_family_init\n");
++#if !defined(CACTUS)
+ 	ether_family_init();
++#endif
+ #endif /* ETHER */
+ 
+-#if NETWORKING
++#if NETWORKING && !defined(CACTUS)
+ #if CONTENT_FILTER
+@@ -1033,2 +1050,5 @@
+ #endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST70 root path begin");
++#endif
+ 	bsd_init_kprintf("calling inittodr\n");
+@@ -1049,2 +1069,5 @@
+ 		setconf();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST70 root selection done");
++#endif
+ #if CONFIG_NETBOOT
