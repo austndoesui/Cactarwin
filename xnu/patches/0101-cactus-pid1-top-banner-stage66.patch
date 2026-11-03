@@ -59,11 +59,3 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  	fbcon_col = 1;
  	fbcon_literal(cactus_pid1_bar_state == 2u ?
  	    "PID1 RUNNING - user syscall verified" :
-@@ -868,6 +871,7 @@
- {
- 	if (cactus_pid1_bar_state != 2u) {
- 		cactus_pid1_bar_state = 2u;
-+		cactus_pid1_bar_draw();
- 	}
- }
- 

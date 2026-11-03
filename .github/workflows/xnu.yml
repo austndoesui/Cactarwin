@@ -114,7 +114,32 @@ jobs:
         env:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh
+        run: |
+          set -o pipefail
+          bash build.sh 2>&1 | tee ../cactus-build.log
+          if [ "$MACHINE_CONFIG" = CACTUS ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          output = Path('../cactus-build.log').read_text(errors='replace')
+          output = re.sub(r'\x1b\[[0-9;]*m', '', output)
+          required = (
+              '0100-cactus-pid1-status-stage65.patch',
+              '0101-cactus-pid1-top-banner-stage66.patch',
+              '0102-cactus-visible-bar-vfs-stage67.patch',
+          )
+          failures = []
+          for name in required:
+              skipped = re.search(r'Skipping patch\s+[^\n]*' + re.escape(name), output)
+              applied = re.search(r'Applying patch:\s+[^\n]*' + re.escape(name), output)
+              if skipped or not applied:
+                  failures.append(f'{name}: ' + ('SKIPPED' if skipped else 'NOT APPLIED'))
+          if failures:
+              raise SystemExit('Required Cactus patches failed: ' + ', '.join(failures))
+          print('REQUIRED CACTUS PATCHES APPLIED:', ', '.join(required))
+          PY
+          fi
 
       - name: ccache stats
         if: always()
