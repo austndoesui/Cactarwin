@@ -1,0 +1,69 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -721,7 +721,7 @@
+ #endif
+ #if defined(CACTUS)
+ /* Rows [0, 7) always belong to the native Cactarwin status header. */
+-#define FBCON_HEADER_ROWS 7u
++#define FBCON_HEADER_ROWS 8u
+ #endif
+ #define FBCON_FG        0xffffffffu
+ #define FBCON_BG        0xff000000u
+@@ -732,6 +732,9 @@
+ static uint32_t fbcon_log_first_row;
+ static void fbcon_transmit_data(uint8_t c);
+ #if defined(CACTUS)
++static void cactus_pid1_bar_draw(void);
++#endif
++#if defined(CACTUS)
+ static void
+ fbcon_literal(const char *s)
+ {
+@@ -779,10 +782,9 @@
+ 		fbcon_clear_row(r);
+ 	}
+ #if defined(CACTUS)
+-	/* Reserve the final 16-pixel row for the persistent PID1 indicator;
+-	 * it must never be cleared by normal log scrolling. */
+-	fbcon_rows--;
++	/* The reserved PID1 row now occupies the topmost visible scanline. */
+ 	if (fbcon_rows > FBCON_HEADER_ROWS + 4) {
++		fbcon_row = 1; /* Keep the colored strip above Cactarwin banner. */
+ 		fbcon_literal("=== [ Cactarwin / Cactus-XNU ] ===\n");
+ 		fbcon_literal("PROJECT  Cactarwin (cactus-xnu)\n");
+ 		fbcon_literal("DEVICE   Xiaomi Redmi 6A (cactus)\n");
+@@ -794,6 +796,7 @@
+ 		fbcon_col = 0;
+ 		fbcon_row = FBCON_HEADER_ROWS;
+ 		fbcon_clear_row(fbcon_row);
++		cactus_pid1_bar_draw();
+ 	}
+ #endif
+ }
+@@ -844,7 +847,7 @@
+ 	    fbcon_rows == 0) {
+ 		return;
+ 	}
+-	const uint32_t y0 = fbcon_rows * 16u * FBCON_SCALE;
++	const uint32_t y0 = 0u; /* Visible top row, independent of panel cropping. */
+ 	const uint32_t color = cactus_pid1_bar_state == 2u ?
+ 	    0xff168c43u : 0xffb36a15u;
+ 	for (uint32_t y = y0; y < y0 + 16u * FBCON_SCALE && y < fbcon_height; ++y) {
+@@ -854,7 +857,7 @@
+ 		}
+ 	}
+ 	const uint32_t save_row = fbcon_row, save_col = fbcon_col;
+-	fbcon_row = fbcon_rows;
++	fbcon_row = 0u;
+ 	fbcon_col = 1;
+ 	fbcon_literal(cactus_pid1_bar_state == 2u ?
+ 	    "PID1 RUNNING - user syscall verified" :
+@@ -868,6 +871,7 @@
+ {
+ 	if (cactus_pid1_bar_state != 2u) {
+ 		cactus_pid1_bar_state = 2u;
++		cactus_pid1_bar_draw();
+ 	}
+ }
+ 
