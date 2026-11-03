@@ -1,7 +1,7 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -6749,4 +6749,42 @@
+@@ -6749,4 +6749,46 @@
   *		initproc might be different.
   */
 +#if defined(CACTUS)
@@ -9,6 +9,10 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 + * first userspace task may have a valid VM map before its TTBR0 switch/fault
 + * path is ready. Wire the allocated page, then write the *mapped* page, not
 + * the unbacked user VA.  These are genuine PID1 argument bytes for execve. */
++/* The low-level ARM pmap helpers are private to XNU's pmap headers. */
++extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++extern vm_map_address_t phystokv(pmap_paddr_t);
++
 +static kern_return_t
 +cactus_pid1_copy_to_map(vm_map_t map, vm_map_address_t dst,
 +    const void *src, vm_size_t length)
@@ -28,7 +32,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +    while (length != 0) {
 +        vm_map_offset_t offset = dst & PAGE_MASK;
 +        vm_size_t chunk = MIN(length, PAGE_SIZE - offset);
-+        ppnum_t page = pmap_find_phys(vm_map_pmap(map), dst);
++        ppnum_t page = pmap_find_phys(map->pmap, dst);
 +        if (page == 0) {
 +            return KERN_INVALID_ADDRESS;
 +        }
@@ -44,7 +48,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +
  static int
  load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
-@@ -6783,11 +6821,11 @@
+@@ -6783,11 +6825,11 @@
  	argv0 = scratch_addr;
  #if defined(CACTUS)
 -	fbcon_stage53_progress("ST73 PID1 pathname copy");
@@ -59,28 +63,28 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	fbcon_stage53_progress(error ? "ST74 PID1 page copy failed" : "ST74 PID1 pathname copied");
  #endif
  	if (error) {
-@@ -6806,5 +6844,5 @@
+@@ -6806,5 +6848,5 @@
  		argv1 = scratch_addr;
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
 +		error = cactus_pid1_copy_to_map(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(init_args, argv1, init_args_length);
-@@ -6825,5 +6863,5 @@
+@@ -6825,5 +6867,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
 +		error = cactus_pid1_copy_to_map(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv64bit, scratch_addr, sizeof(argv64bit));
-@@ -6840,5 +6878,5 @@
+@@ -6840,5 +6882,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
 +		error = cactus_pid1_copy_to_map(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv32bit, scratch_addr, sizeof(argv32bit));
-@@ -6850,5 +6888,5 @@
+@@ -6850,5 +6892,5 @@
  
  #if defined(CACTUS)
 -	fbcon_stage53_progress("ST73 PID1 argv copied");
