@@ -1,0 +1,114 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6756,4 +6756,14 @@
+ 	struct execve_args init_exec_args;
+ 	user_addr_t argv0 = USER_ADDR_NULL, argv1 = USER_ADDR_NULL;
++#if defined(CACTUS)
++	/* The first user process may enter bsdinit_task with a borrowed map.
++	 * Resolve every user write against the target process task explicitly. */
++	vm_map_t init_map = get_task_map(proc_task(p));
++	extern void fbcon_stage53_progress(const char *);
++	if (init_map == VM_MAP_NULL) {
++		fbcon_stage53_progress("ST73 PID1 VM map missing");
++		return EFAULT;
++	}
++#endif
+ 
+ 	/*
+@@ -6769,9 +6779,16 @@
+ 	size_t path_length = strlen(path) + 1;
+ 	argv0 = scratch_addr;
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST73 PID1 pathname copy");
++	error = copyoutmap(init_map, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
++#else
+ 	error = copyout(path, argv0, path_length);
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress(error ? "ST73 PID1 pathname failed" : "ST73 PID1 pathname copied");
++#endif
+ 	if (error) {
+ 		return error;
+ 	}
+-
+ 	scratch_addr = USER_ADDR_ALIGN(scratch_addr + path_length, sizeof(user_addr_t));
+ 
+@@ -6785,5 +6802,9 @@
+ 
+ 		argv1 = scratch_addr;
++#if defined(CACTUS)
++		error = copyoutmap(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
++#else
+ 		error = copyout(init_args, argv1, init_args_length);
++#endif
+ 		if (error) {
+ 			return error;
+@@ -6800,5 +6821,9 @@
+ 		argv64bit[2] = USER_ADDR_NULL;
+ 
++#if defined(CACTUS)
++		error = copyoutmap(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
++#else
+ 		error = copyout(argv64bit, scratch_addr, sizeof(argv64bit));
++#endif
+ 		if (error) {
+ 			return error;
+@@ -6811,5 +6836,9 @@
+ 		argv32bit[2] = USER_ADDR_NULL;
+ 
++#if defined(CACTUS)
++		error = copyoutmap(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
++#else
+ 		error = copyout(argv32bit, scratch_addr, sizeof(argv32bit));
++#endif
+ 		if (error) {
+ 			return error;
+@@ -6817,4 +6846,7 @@
+ 	}
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST73 PID1 argv copied");
++#endif
+ 	/*
+ 	 * Set up argument block for fake call to execve.
+@@ -6828,4 +6860,7 @@
+ 	 */
+ 	set_security_token(p);
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST73 PID1 token ready");
++#endif
+ 
+ #if defined(CACTUS)
+@@ -6884,9 +6919,31 @@
+ 	uint32_t i;
+ 	int error;
++#if defined(CACTUS)
++	vm_map_t map = get_task_map(proc_task(p));
++#else
+ 	vm_map_t map = current_map();
++#endif
+ 	mach_vm_offset_t scratch_addr = 0;
++#if defined(CACTUS)
++	extern void fbcon_stage53_progress(const char *);
++	if (map == VM_MAP_NULL) {
++		fbcon_stage53_progress("ST73 PID1 map unavailable");
++		panic("Cactus PID1 has no task VM map");
++	}
++#endif
+ 	mach_vm_size_t map_page_size = vm_map_page_size(map);
+ 
++#if defined(CACTUS)
++	kern_return_t cactus_vm_result = mach_vm_allocate_kernel(map, &scratch_addr,
++	    map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++	if (cactus_vm_result != KERN_SUCCESS || scratch_addr == 0) {
++		fbcon_stage53_progress("ST73 PID1 VM alloc ERROR");
++		panic("Cactus PID1 scratch allocation failed: kr=%d addr=0x%llx",
++		    cactus_vm_result, (unsigned long long)scratch_addr);
++	}
++	fbcon_stage53_progress("ST73 PID1 VM alloc OK");
++#else
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++#endif
+ #if defined(CACTUS)
+ 	/* The minimal mockfs root exposes only /sbin/launchd.  In a DEVELOPMENT

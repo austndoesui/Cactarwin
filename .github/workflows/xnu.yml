@@ -133,6 +133,7 @@ jobs:
               '0105-cactus-minimal-pid1-stage70.patch',
               '0106-cactus-pid1-direct-mockfs-stage71.patch',
               '0107-cactus-mockfs-posix-pid1-stage72.patch',
+              '0108-cactus-pid1-vm-stage73.patch',
           )
           failures = []
           for name in required:
