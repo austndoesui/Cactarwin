@@ -10,11 +10,11 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 + * path is ready. Wire the allocated page, then write the *mapped* page, not
 + * the unbacked user VA.  These are genuine PID1 argument bytes for execve. */
 +/* The low-level ARM pmap helpers are private to XNU's pmap headers. */
-+extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++extern ppnum_t pmap_find_phys(void *, uint64_t);
 +extern vm_map_address_t phystokv(pmap_paddr_t);
 +
 +static kern_return_t
-+cactus_pid1_copy_to_map(vm_map_t map, vm_map_address_t dst,
++cactus_pid1_copy_to_map(vm_map_t map, proc_t p, vm_map_address_t dst,
 +    const void *src, vm_size_t length)
 +{
 +    vm_map_offset_t lo = vm_map_trunc_page(dst, vm_map_page_mask(map));
@@ -32,7 +32,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +    while (length != 0) {
 +        vm_map_offset_t offset = dst & PAGE_MASK;
 +        vm_size_t chunk = MIN(length, PAGE_SIZE - offset);
-+        ppnum_t page = pmap_find_phys(map->pmap, dst);
++        ppnum_t page = pmap_find_phys(get_task_pmap(proc_task(p)), dst);
 +        if (page == 0) {
 +            return KERN_INVALID_ADDRESS;
 +        }
@@ -54,7 +54,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	fbcon_stage53_progress("ST73 PID1 pathname copy");
 -	error = copyoutmap(init_map, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
 +	fbcon_stage53_progress("ST74 PID1 page wire/copy");
-+	error = cactus_pid1_copy_to_map(init_map, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
++	error = cactus_pid1_copy_to_map(init_map, p, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  	error = copyout(path, argv0, path_length);
  #endif
@@ -67,21 +67,21 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		argv1 = scratch_addr;
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(init_args, argv1, init_args_length);
 @@ -6825,5 +6867,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv64bit, scratch_addr, sizeof(argv64bit));
 @@ -6840,5 +6882,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv32bit, scratch_addr, sizeof(argv32bit));
 @@ -6850,5 +6892,5 @@
