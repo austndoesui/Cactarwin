@@ -1,10 +1,13 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -6756,4 +6756,14 @@
+@@ -6756,4 +6756,17 @@
  	struct execve_args init_exec_args;
  	user_addr_t argv0 = USER_ADDR_NULL, argv1 = USER_ADDR_NULL;
 +#if defined(CACTUS)
++	/* copyoutmap is declared for other XNU compilation contexts, but this
++	 * exec translation unit uses its implementation through a local prototype. */
++	extern kern_return_t copyoutmap(vm_map_t, void *, vm_map_offset_t, vm_size_t);
 +	/* The first user process may enter bsdinit_task with a borrowed map.
 +	 * Resolve every user write against the target process task explicitly. */
 +	vm_map_t init_map = get_task_map(proc_task(p));
@@ -16,7 +19,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  
  	/*
-@@ -6769,9 +6779,16 @@
+@@ -6769,9 +6782,16 @@
  	size_t path_length = strlen(path) + 1;
  	argv0 = scratch_addr;
 +#if defined(CACTUS)
@@ -34,7 +37,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -
  	scratch_addr = USER_ADDR_ALIGN(scratch_addr + path_length, sizeof(user_addr_t));
  
-@@ -6785,5 +6802,9 @@
+@@ -6785,5 +6805,9 @@
  
  		argv1 = scratch_addr;
 +#if defined(CACTUS)
@@ -44,7 +47,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  		if (error) {
  			return error;
-@@ -6800,5 +6821,9 @@
+@@ -6800,5 +6824,9 @@
  		argv64bit[2] = USER_ADDR_NULL;
  
 +#if defined(CACTUS)
@@ -54,7 +57,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  		if (error) {
  			return error;
-@@ -6811,5 +6836,9 @@
+@@ -6811,5 +6839,9 @@
  		argv32bit[2] = USER_ADDR_NULL;
  
 +#if defined(CACTUS)
@@ -64,7 +67,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  		if (error) {
  			return error;
-@@ -6817,4 +6846,7 @@
+@@ -6817,4 +6849,7 @@
  	}
  
 +#if defined(CACTUS)
@@ -72,7 +75,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  	/*
  	 * Set up argument block for fake call to execve.
-@@ -6828,4 +6860,7 @@
+@@ -6828,4 +6863,7 @@
  	 */
  	set_security_token(p);
 +#if defined(CACTUS)
@@ -80,7 +83,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  
  #if defined(CACTUS)
-@@ -6884,9 +6919,31 @@
+@@ -6884,9 +6922,31 @@
  	uint32_t i;
  	int error;
 +#if defined(CACTUS)
