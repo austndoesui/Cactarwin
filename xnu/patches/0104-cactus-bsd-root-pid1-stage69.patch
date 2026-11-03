@@ -1,0 +1,256 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -738,3 +738,10 @@
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 restricted ports enter");
++#endif
+ 	restricted_in_port_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 restricted ports done");
++#endif
++
+ #endif /* SOCKETS */
+@@ -747,3 +754,10 @@
+ 	bsd_init_kprintf("calling audit_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 audit init enter");
++#endif
+ 	audit_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 audit init done");
++#endif
++
+ #endif
+@@ -752,3 +766,10 @@
+ 	bsd_init_kprintf("calling knote_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 knote init enter");
++#endif
+ 	knote_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 knote init done");
++#endif
++
+ 
+@@ -756,3 +777,10 @@
+ 	bsd_init_kprintf("calling eventhandler_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 eventhandler enter");
++#endif
+ 	eventhandler_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 eventhandler done");
++#endif
++
+ 
+@@ -760,10 +788,38 @@
+ 	bsd_init_kprintf("calling aio_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 aio init enter");
++#endif
+ 	aio_init();
+-
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 aio init done");
++#endif
++
++
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 pthread init enter");
++#endif
+ 	pthread_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 pthread init done");
++#endif
++
+ 	/* POSIX Shm and Sem */
+ 	bsd_init_kprintf("calling pshm_cache_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 posix shm enter");
++#endif
+ 	pshm_cache_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 posix shm done");
++#endif
++
+ 	bsd_init_kprintf("calling psem_cache_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 posix sem enter");
++#endif
+ 	psem_cache_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 posix sem done");
++#endif
++
+ 
+@@ -775,5 +831,19 @@
+ 	bsd_init_kprintf("calling nwk_wq_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 net workqueue enter");
++#endif
+ 	nwk_wq_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 net workqueue done");
++#endif
++
+ 	bsd_init_kprintf("calling dlil_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 dlil init enter");
++#endif
+ 	dlil_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 dlil init done");
++#endif
++
+ #endif /* NETWORKING */
+@@ -781,8 +851,36 @@
+ 	bsd_init_kprintf("calling socketinit\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 socket init enter");
++#endif
+ 	socketinit();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 socket init done");
++#endif
++
+ 	bsd_init_kprintf("calling domaininit\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 domain init enter");
++#endif
+ 	domaininit();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 domain init done");
++#endif
++
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 iptap init enter");
++#endif
+ 	iptap_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 iptap init done");
++#endif
++
+ #if FLOW_DIVERT
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 flow divert enter");
++#endif
+ 	flow_divert_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 flow divert done");
++#endif
++
+ #endif  /* FLOW_DIVERT */
+@@ -791,3 +889,10 @@
+ 	bsd_init_kprintf("calling skywalk_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 skywalk init enter");
++#endif
+ 	(void) skywalk_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 skywalk init done");
++#endif
++
+ #endif /* SKYWALK */
+@@ -796,5 +901,19 @@
+ 	/* Initialize Network Extension Control Policies */
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 necp init enter");
++#endif
+ 	necp_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 necp init done");
++#endif
++
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 netagent init enter");
+ #endif
+ 	netagent_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 netagent init done");
++#endif
++
+ #endif /* NETWORKING */
+@@ -813,3 +932,10 @@
+ 	bsd_init_kprintf("calling memorystatus_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 memorystatus enter");
++#endif
+ 	memorystatus_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 memorystatus done");
++#endif
++
+ #endif /* CONFIG_MEMORYSTATUS */
+@@ -817,3 +943,10 @@
+ 	bsd_init_kprintf("calling sysctl_mib_init\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 sysctl mib enter");
++#endif
+ 	sysctl_mib_init();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 sysctl mib done");
++#endif
++
+ 
+@@ -896,2 +1029,5 @@
+ 	fbcon_stage53_progress("ST68 pre-root enter");
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 network stack returned");
+ #endif
+@@ -944,2 +1080,5 @@
+ 		}
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 mountroot failed");
+ #endif
+@@ -1186,3 +1325,10 @@
+ 	kprintf("bsd_autoconf: calling kminit\n");
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 autoconf kmem enter");
++#endif
+ 	kminit();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 autoconf kmem done");
++#endif
++
+ 
+@@ -1194,2 +1340,5 @@
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 autoconf pseudo enter");
++#endif
+ 		for (pi = pseudo_inits; pi->ps_func; pi++) {
+@@ -1199,3 +1348,13 @@
+ 
+-	return IOKitBSDInit();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 autoconf pseudo done");
++#endif
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 IOKitBSDInit enter");
++#endif
++	kern_return_t cactus_autoconf_result = IOKitBSDInit();
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 IOKitBSDInit returned");
++#endif
++	return cactus_autoconf_result;
+ }
+@@ -1211,4 +1370,14 @@
+ 
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 IOFindBSDRoot enter");
++#endif
+ 	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 IOFindBSDRoot returned");
++#endif
++
+ 	if (err) {
++#if defined(CACTUS)
++	fbcon_stage53_progress("ST69 IOFindBSDRoot FAILED");
++#endif
+ 		printf("setconf: IOFindBSDRoot returned an error (%d);"
