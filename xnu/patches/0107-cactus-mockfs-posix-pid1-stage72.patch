@@ -1,7 +1,7 @@
 diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
 --- a/bsd/miscfs/mockfs/mockfs_vnops.c
 +++ b/bsd/miscfs/mockfs/mockfs_vnops.c
-@@ -85,5 +85,7 @@
+@@ -85,4 +85,6 @@
  {
 +#if !defined(CACTUS)
  	char held_char;
