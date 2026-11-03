@@ -1,0 +1,60 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6830,3 +6830,11 @@
+ 
++#if defined(CACTUS)
++	extern void fbcon_stage53_progress(const char *);
++	fbcon_stage53_progress("ST71 PID1 execve entered");
++	error = execve(p, &init_exec_args, retval);
++	fbcon_stage53_progress((error && error != EJUSTRETURN) ? "ST71 PID1 execve error" : "ST71 PID1 execve ok");
++	return error;
++#else
+ 	return execve(p, &init_exec_args, retval);
++#endif
+ }
+@@ -6882,2 +6890,19 @@
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++#if defined(CACTUS)
++	/* The minimal mockfs root exposes only /sbin/launchd.  In a DEVELOPMENT
++	 * kernel the default first candidate is an absent AppleInternal path. */
++	extern void fbcon_stage53_progress(const char *);
++	fbcon_stage53_progress("ST71 PID1 /sbin exec start");
++	if (scratch_addr == 0) {
++		fbcon_stage53_progress("ST71 PID1 scratch failed");
++		panic("Cactus PID1 scratch vm allocation failed");
++	}
++	error = load_init_program_at_path(p, (user_addr_t)scratch_addr, "/sbin/launchd");
++	if (error && error != EJUSTRETURN) {
++		fbcon_stage53_progress("ST71 PID1 exec ERROR");
++		panic("Cactus PID1 /sbin/launchd exec failed errno %d", error);
++	}
++	fbcon_stage53_progress("ST71 PID1 exec accepted");
++	return;
++#endif
+ #if CONFIG_MEMORYSTATUS
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -413,6 +413,18 @@
+ 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC) err_create },/* create */
+-	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC) err_open }, /* open */
++	#if defined(CACTUS)
++	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC) nop_open },
++#else
++	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC) err_open },
++#endif /* open */
+ 	{ .opve_op = &vnop_mknod_desc, .opve_impl = (VOPFUNC) err_mknod }, /* mknod */
+-	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC) err_close }, /* close */
+-	{ .opve_op = &vnop_access_desc, .opve_impl = (VOPFUNC) err_access }, /* access */
++	#if defined(CACTUS)
++	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC) nop_close },
++#else
++	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC) err_close },
++#endif /* close */
++	#if defined(CACTUS)
++	{ .opve_op = &vnop_access_desc, .opve_impl = (VOPFUNC) nop_access },
++#else
++	{ .opve_op = &vnop_access_desc, .opve_impl = (VOPFUNC) err_access },
++#endif /* access */
+ 	{ .opve_op = &vnop_getattr_desc, .opve_impl = (VOPFUNC) mockfs_getattr }, /* getattr */
