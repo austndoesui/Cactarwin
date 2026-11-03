@@ -1,34 +1,19 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -315,8 +315,11 @@
- extern int customnbuf;
- 
- kern_return_t bsd_autoconf(void);
+@@ -318,2 +318,5 @@
  void bsd_utaskbootstrap(void);
 +#if defined(CACTUS)
 +extern void fbcon_stage53_progress(const char *);
 +#endif
  
- #if CONFIG_DEV_KMEM
- extern void dev_kmem_init(void);
- #endif
-@@ -696,8 +699,11 @@
- 	vfsinit();
- #if defined(CACTUS)
- 	fbcon_stage53_progress("ST67 BSD VFS returned");
+@@ -699,2 +702,5 @@
  #endif
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 post-VFS init");
 +#endif
  
- #if defined(ARM64_BOARD_CONFIG_SWEET)
- 	/* AMFI's MAC policy is built in on SWEET (bsd/kern/sweet_amfi.c). */
- 	extern void sweet_amfi_policy_register(void);
-@@ -720,10 +726,17 @@
- 	/* Initialize per-CPU cache allocator */
- 	mcache_init();
- 
+@@ -723,4 +729,11 @@
  	/* Initialize mbuf's. */
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 mbuf init enter");
@@ -40,13 +25,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  	restricted_in_port_init();
- #endif /* SOCKETS */
- 
- 	/*
-@@ -803,10 +816,17 @@
- 
- 	bsd_init_kprintf("calling sysctl_mib_init\n");
- 	sysctl_mib_init();
+@@ -806,4 +819,11 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 autoconf enter");
@@ -58,13 +37,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  
- #if CONFIG_DTRACE
- 	dtrace_postinit();
- #endif
-@@ -871,25 +891,45 @@
- 	bsd_init_kprintf("calling net_init_run\n");
- 	net_init_run();
- #endif /* NETWORKING */
+@@ -874,4 +894,11 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 pre-root enter");
@@ -76,18 +49,13 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  
- 	/* Mount the root file system. */
- 	while (TRUE) {
- 		int err;
+@@ -881,2 +908,5 @@
  
 +	#if defined(CACTUS)
 +		fbcon_stage53_progress("ST68 root select");
 +	#endif
  		bsd_init_kprintf("calling setconf\n");
- 		setconf();
- #if CONFIG_NETBOOT
- 		netboot = (mountroot == netboot_mountroot);
- #endif
+@@ -887,6 +917,16 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 mountroot enter");
@@ -104,38 +72,20 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  		rootdevice[0] = '\0';
- #if CONFIG_NETBOOT
- 		if (netboot) {
- 			PE_display_icon( 0, "noroot");  /* XXX a netboot-specific icon would be nicer */
-@@ -909,8 +949,11 @@
- 	IOSecureBSDRoot(rootdevice);
- 
- 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
+@@ -912,2 +952,5 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 root vnode enter");
 +#endif
  	bsd_init_kprintf("calling VFS_ROOT\n");
- 	/* Get the vnode for '/'.  Set fdp->fd_fd.fd_cdir to reference it. */
- 	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, vfs_context_kernel())) {
- 		panic("bsd_init: cannot find root vnode: %s", PE_boot_args());
-@@ -921,8 +964,12 @@
- 	lck_rw_lock_exclusive(&rootvnode_rw_lock);
- 	set_rootvnode(init_rootvnode);
- 	lck_rw_unlock_exclusive(&rootvnode_rw_lock);
+@@ -924,2 +967,6 @@
  	init_rootvnode = NULLVP;  /* use rootvnode after this point */
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 root vnode ready");
 +#endif
 +
  
- 
- 	if (!bsd_rooted_ramdisk()) {
- 		boolean_t require_rootauth = FALSE;
-@@ -1003,10 +1050,17 @@
- #if DEVFS
- 	{
- 		char mounthere[] = "/dev"; /* !const because of internal casting */
+@@ -1006,4 +1053,11 @@
  
 +	#if defined(CACTUS)
 +		fbcon_stage53_progress("ST68 devfs mount enter");
@@ -147,13 +97,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  	}
- #endif /* DEVFS */
- 
- #if CONFIG_BASESYSTEMROOT
-@@ -1049,10 +1103,17 @@
- 	/* Initialize signal state for process 0. */
- 	bsd_init_kprintf("calling siginit\n");
- 	siginit(kernproc);
+@@ -1052,4 +1106,11 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 clone enter");
@@ -165,26 +109,14 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +#endif
 +
  
- 	pal_kernel_announce();
- 
- 	bsd_init_kprintf("calling mountroot_post_hook\n");
-@@ -1093,8 +1154,12 @@
- 	mac_cred_label_associate_user(proc_ucred(p));
- #endif
- 
+@@ -1096,2 +1157,6 @@
  	vm_init_before_launchd();
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 VM ready");
 +#endif
 +
  
- #if CONFIG_XNUPOST
- 	int result = bsd_list_tests();
- 	result = bsd_do_post();
-@@ -1104,9 +1169,15 @@
- #endif
- 
- 	bsd_init_kprintf("bsd_do_post - done");
+@@ -1107,3 +1172,9 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 exec enter");
@@ -194,58 +126,39 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 +	fbcon_stage53_progress("ST68 PID1 exec returned");
 +#endif
  	lock_trace = 1;
- }
- 
- kern_return_t
-@@ -1179,11 +1250,19 @@
- 	 * Clone the bootstrap process from the kernel process, without
- 	 * inheriting either task characteristics or memory from the kernel;
- 	 */
+@@ -1182,2 +1253,6 @@
  	thread = cloneproc(TASK_NULL, NULL, kernproc, CLONEPROC_FLAGS_MEMSTAT_INTERNAL);
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 clone created");
 +#endif
 +
  
- 	/* Hold the reference as it will be dropped during shutdown */
+@@ -1185,2 +1260,6 @@
  	initproc = proc_find(1);
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 initproc obtained");
 +#endif
 +
  #if __PROC_INTERNAL_DEBUG
- 	if (initproc == PROC_NULL) {
- 		panic("bsd_utaskbootstrap: initproc not set");
- 	}
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -6915,18 +6915,28 @@
- 	}
- #endif
- 
+@@ -6918,2 +6918,6 @@
  	error = ENOENT;
 +#if defined(CACTUS)
 +	extern void fbcon_stage53_progress(const char *);
 +	fbcon_stage53_progress("ST68 PID1 exec search");
 +#endif
  	for (i = 0; i < sizeof(init_programs) / sizeof(init_programs[0]); i++) {
- 		printf("load_init_program: attempting to load %s\n", init_programs[i]);
+@@ -6921,2 +6925,5 @@
  		error = load_init_program_at_path(p, (user_addr_t)scratch_addr, init_programs[i]);
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 exec attempted");
 +#endif
  		if (!error) {
- 			return;
- 		} else if (error != ENOENT) {
- 			printf("load_init_program: failed loading %s: errno %d\n", init_programs[i], error);
- 		}
- 	}
+@@ -6928,2 +6935,5 @@
  
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST68 PID1 exec FAILED");
 +#endif
  	panic("Process 1 exec of %s failed, errno %d", ((i == 0) ? "<null>" : init_programs[i - 1]), error);
- }
- 
- /*
