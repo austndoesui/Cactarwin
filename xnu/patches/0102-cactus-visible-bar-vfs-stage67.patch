@@ -1,17 +1,7 @@
 diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
 --- a/pexpert/arm/pe_serial.c
 +++ b/pexpert/arm/pe_serial.c
-@@ -795,8 +795,9 @@
- 		fbcon_log_first_row = FBCON_HEADER_ROWS;
- 		fbcon_col = 0;
- 		fbcon_row = FBCON_HEADER_ROWS;
- 		fbcon_clear_row(fbcon_row);
-+		if (cactus_pid1_bar_state == 0u) { cactus_pid1_bar_state = 1u; }
- 		cactus_pid1_bar_draw();
- 	}
- #endif
- }
-@@ -846,9 +847,9 @@
+@@ -846,9 +846,9 @@
  	if (fbcon_base == NULL || fbcon_log_first_row != FBCON_HEADER_ROWS ||
  	    fbcon_rows == 0) {
  		return;
@@ -22,7 +12,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
  	    0xff168c43u : 0xffb36a15u;
  	for (uint32_t y = y0; y < y0 + 16u * FBCON_SCALE && y < fbcon_height; ++y) {
  		volatile uint32_t *line = fbcon_base + y * (fbcon_stride / 4u);
-@@ -856,9 +857,9 @@
+@@ -856,9 +856,9 @@
  			line[x] = color;
  		}
  	}
@@ -36,7 +26,7 @@ diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
 diff --git a/bsd/vfs/vfs_init.c b/bsd/vfs/vfs_init.c
 --- a/bsd/vfs/vfs_init.c
 +++ b/bsd/vfs/vfs_init.c
-@@ -412,13 +412,26 @@
+@@ -412,13 +412,23 @@
  	 * dead_mountp is a statically-initialized constant pointer
  	 * to dead_mount_store.
  	 */
@@ -44,7 +34,6 @@ diff --git a/bsd/vfs/vfs_init.c b/bsd/vfs/vfs_init.c
 +#if defined(CACTUS)
 +	extern void fbcon_stage53_progress(const char *);
 +	fbcon_stage53_progress("ST67 VFS before decmpfs");
-+	kprintf("ST67 VFS: before decmpfs_init\n");
 +#endif
  #if FS_COMPRESSION
  	decmpfs_init();
@@ -52,13 +41,11 @@ diff --git a/bsd/vfs/vfs_init.c b/bsd/vfs/vfs_init.c
 -
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST67 VFS after decmpfs");
-+	kprintf("ST67 VFS: after decmpfs_init\n");
 +	fbcon_stage53_progress("ST67 nspace enter");
 +#endif
  	nspace_resolver_init();
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST67 VFS nspace done");
-+	kprintf("ST67 VFS: nspace done\n");
 +#endif
  }
  
@@ -67,7 +54,7 @@ diff --git a/bsd/vfs/vfs_init.c b/bsd/vfs/vfs_init.c
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -688,9 +688,17 @@
+@@ -688,9 +688,16 @@
  	IOKitInitializeTime();
  
  	/* Initialize the file systems. */
@@ -79,7 +66,6 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  	vfsinit();
 +#if defined(CACTUS)
 +	fbcon_stage53_progress("ST67 BSD VFS returned");
-+	kprintf("ST67 BSD: vfsinit returned\n");
 +#endif
  
  #if defined(ARM64_BOARD_CONFIG_SWEET)
