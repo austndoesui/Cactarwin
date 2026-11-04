@@ -136,6 +136,7 @@ jobs:
               '0108-cactus-pid1-vm-stage73.patch',
               '0109-cactus-pid1-physmap-stage74.patch',
               '0110-cactus-pid1-exec-read-stage75.patch',
+              '0111-cactus-pid1-shadow-stage76.patch',
           )
           failures = []
           for name in required:

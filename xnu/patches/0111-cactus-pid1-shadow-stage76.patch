@@ -1,0 +1,73 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -398,25 +398,29 @@
+ static vm_map_address_t cactus_init_scratch_start;
+ static vm_map_size_t cactus_init_scratch_size;
++/* Mirror only the one bootstrap argv page. The physical target still receives
++ * the same bytes, while exec path parsing can read a stable kernel buffer. */
++static uint8_t cactus_init_scratch_shadow[PAGE_SIZE];
++static boolean_t cactus_init_shadow_ready;
++static void
++cactus_init_shadow_write(vm_map_address_t dst, const void *src, vm_size_t size)
++{
++    if (!cactus_init_shadow_ready || dst < cactus_init_scratch_start ||
++        dst - cactus_init_scratch_start >= sizeof(cactus_init_scratch_shadow) ||
++        size > sizeof(cactus_init_scratch_shadow) - (dst - cactus_init_scratch_start)) {
++        return;
++    }
++    memcpy(&cactus_init_scratch_shadow[dst - cactus_init_scratch_start], src, size);
++}
+ static int cactus_init_read(void *dst, user_addr_t src, size_t n)
+ {
+     proc_t proc = current_proc();
+-    if (proc == PROC_NULL || proc_pid(proc) != 1 ||
+-        cactus_init_scratch_start == 0 || src < cactus_init_scratch_start ||
+-        src - cactus_init_scratch_start >= cactus_init_scratch_size ||
+-        n > cactus_init_scratch_size - (src - cactus_init_scratch_start)) {
+-        return copyin(src, dst, n);
++    if (proc != PROC_NULL && proc_pid(proc) == 1 &&
++        cactus_init_shadow_ready && src >= cactus_init_scratch_start &&
++        src - cactus_init_scratch_start < cactus_init_scratch_size &&
++        n <= cactus_init_scratch_size - (src - cactus_init_scratch_start)) {
++        memcpy(dst, &cactus_init_scratch_shadow[src - cactus_init_scratch_start], n);
++        return 0;
+     }
+-    uint8_t *output = dst;
+-    while (n) {
+-        ppnum_t ppn = pmap_find_phys(get_task_pmap(proc_task(proc)), src);
+-        if (!ppn) return EFAULT;
+-        vm_size_t offset = src & PAGE_MASK;
+-        vm_size_t length = MIN(n, PAGE_SIZE - offset);
+-        memcpy(output, (void *)(uintptr_t)(phystokv(ptoa(ppn)) + offset), length);
+-        output += length;
+-        src += length;
+-        n -= length;
+-    }
+-    return 0;
++    return copyin(src, dst, n);
+ }
+ static int cactus_init_readstr(user_addr_t src, char *dst, size_t limit, size_t *copied)
+@@ -2208,4 +2212,7 @@
+ #endif
+     error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
++#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress(error ? "ST76 PID1 path ERROR" : "ST76 PID1 path copied");
++#endif
+ 	if (error) {
+ 		goto bad_notrans;
+@@ -6862,4 +6869,5 @@
+         void *target = (void *)(uintptr_t)(phystokv(ptoa(page)) + offset);
+         memcpy(target, bytes, chunk);
++        cactus_init_shadow_write(dst, bytes, chunk);
+         dst += chunk;
+         bytes += chunk;
+@@ -7068,5 +7076,7 @@
+ 	fbcon_stage53_progress("ST73 PID1 VM alloc OK");
+     cactus_init_scratch_start = scratch_addr;
+-    cactus_init_scratch_size = map_page_size;
++    cactus_init_scratch_size = MIN(map_page_size, sizeof(cactus_init_scratch_shadow));
++    bzero(cactus_init_scratch_shadow, sizeof(cactus_init_scratch_shadow));
++    cactus_init_shadow_ready = TRUE;
+ #else
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
