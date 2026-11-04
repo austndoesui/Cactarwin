@@ -1,0 +1,77 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -554,5 +554,23 @@
+ 	case UIO_USERSPACE64:   /* Same for copyin()... */
+ 		#if defined(CACTUS)
+-            error = cactus_init_readstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
++            if (cactus_init_shadow_ready && path >= cactus_init_scratch_start &&
++                path - cactus_init_scratch_start < cactus_init_scratch_size) {
++                size_t offset = path - cactus_init_scratch_start;
++                size_t available = cactus_init_scratch_size - offset;
++                size_t bytes = MIN(len, available);
++                const uint8_t *shadow = &cactus_init_scratch_shadow[offset];
++                const uint8_t *nul = memchr(shadow, 0, bytes);
++                if (nul == NULL) {
++                    error = bytes < len ? EFAULT : ENAMETOOLONG;
++                } else {
++                    len = (size_t)(nul - shadow) + 1;
++                    memcpy(imgp->ip_strings + strlen(EXECUTABLE_KEY), shadow, len);
++                    error = 0;
++                }
++            } else {
++                /* A bootstrap path must not invoke an unresolved early TTBR0 copyin. */
++                error = cactus_init_shadow_ready ? EFAULT :
++                    cactus_init_readstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
++            }
+ #else
+             error = copyinstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
+@@ -2210,9 +2228,9 @@
+ 
+ 	#if defined(CACTUS)
+-    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST75 PID1 path read");
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST77 PID1 wired path enter");
+ #endif
+     error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
+ #if defined(CACTUS)
+-    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress(error ? "ST76 PID1 path ERROR" : "ST76 PID1 path copied");
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress(error ? "ST77 PID1 pathname ERROR" : "ST77 PID1 pathname DONE");
+ #endif
+ 	if (error) {
+@@ -7270,7 +7288,20 @@
+ }
+ 
++#if defined(CACTUS)
++static void *cactus_pid1_execargs_wired;
++#endif
+ static kern_return_t
+ execargs_purgeable_allocate(char **execarg_address)
+ {
++#if defined(CACTUS)
++    proc_t proc = current_proc();
++    if (cactus_init_shadow_ready && proc != PROC_NULL && proc_pid(proc) == 1) {
++        void *buf = kalloc_data(BSD_PAGEABLE_SIZE_PER_EXEC, Z_WAITOK | Z_ZERO);
++        if (buf == NULL) return KERN_RESOURCE_SHORTAGE;
++        cactus_pid1_execargs_wired = buf;
++        *execarg_address = (char *)buf;
++        return KERN_SUCCESS;
++    }
++#endif
+ 	mach_vm_offset_t addr = 0;
+ 	kern_return_t kr = mach_vm_allocate_kernel(bsd_pageable_map, &addr,
+@@ -7285,4 +7316,7 @@
+ execargs_purgeable_reference(void *execarg_address)
+ {
++#if defined(CACTUS)
++    if (execarg_address == cactus_pid1_execargs_wired) return KERN_SUCCESS;
++#endif
+ 	int state = VM_PURGABLE_NONVOLATILE;
+ 	kern_return_t kr = vm_purgable_control(bsd_pageable_map, (vm_offset_t) execarg_address, VM_PURGABLE_SET_STATE, &state);
+@@ -7295,4 +7329,7 @@
+ execargs_purgeable_volatilize(void *execarg_address)
+ {
++#if defined(CACTUS)
++    if (execarg_address == cactus_pid1_execargs_wired) return KERN_SUCCESS;
++#endif
+ 	int state = VM_PURGABLE_VOLATILE | VM_PURGABLE_ORDERING_OBSOLETE;
+ 	kern_return_t kr;
