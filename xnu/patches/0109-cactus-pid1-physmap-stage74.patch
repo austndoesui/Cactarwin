@@ -54,7 +54,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	fbcon_stage53_progress("ST73 PID1 pathname copy");
 -	error = copyoutmap(init_map, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
 +	fbcon_stage53_progress("ST74 PID1 page wire/copy");
-+	error = cactus_pid1_copy_to_map(init_map, p, (void *)path, argv0, path_length) == KERN_SUCCESS ? 0 : EFAULT;
++	error = cactus_pid1_copy_to_map(init_map, p, argv0, path, path_length) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  	error = copyout(path, argv0, path_length);
  #endif
@@ -67,21 +67,21 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		argv1 = scratch_addr;
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, p, (void *)init_args, argv1, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, argv1, init_args, init_args_length) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(init_args, argv1, init_args_length);
 @@ -6825,5 +6867,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, p, argv64bit, scratch_addr, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, scratch_addr, argv64bit, sizeof(argv64bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv64bit, scratch_addr, sizeof(argv64bit));
 @@ -6840,5 +6882,5 @@
  
  #if defined(CACTUS)
 -		error = copyoutmap(init_map, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
-+		error = cactus_pid1_copy_to_map(init_map, p, argv32bit, scratch_addr, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
++		error = cactus_pid1_copy_to_map(init_map, p, scratch_addr, argv32bit, sizeof(argv32bit)) == KERN_SUCCESS ? 0 : EFAULT;
  #else
  		error = copyout(argv32bit, scratch_addr, sizeof(argv32bit));
 @@ -6850,5 +6892,5 @@
