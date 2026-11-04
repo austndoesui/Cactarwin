@@ -1,12 +1,13 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -398,25 +398,29 @@
+@@ -398,25 +398,30 @@
  static vm_map_address_t cactus_init_scratch_start;
  static vm_map_size_t cactus_init_scratch_size;
 +/* Mirror only the one bootstrap argv page. The physical target still receives
 + * the same bytes, while exec path parsing can read a stable kernel buffer. */
-+static uint8_t cactus_init_scratch_shadow[PAGE_SIZE];
++/* Cactus uses a fixed 4 KiB hardware page; PAGE_SIZE is runtime-valued in XNU. */
++static uint8_t cactus_init_scratch_shadow[4096];
 +static boolean_t cactus_init_shadow_ready;
 +static void
 +cactus_init_shadow_write(vm_map_address_t dst, const void *src, vm_size_t size)
@@ -48,7 +49,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +    return copyin(src, dst, n);
  }
  static int cactus_init_readstr(user_addr_t src, char *dst, size_t limit, size_t *copied)
-@@ -2208,4 +2212,7 @@
+@@ -2208,4 +2213,7 @@
  #endif
      error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
 +#if defined(CACTUS)
@@ -56,13 +57,13 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +#endif
  	if (error) {
  		goto bad_notrans;
-@@ -6862,4 +6869,5 @@
+@@ -6862,4 +6870,5 @@
          void *target = (void *)(uintptr_t)(phystokv(ptoa(page)) + offset);
          memcpy(target, bytes, chunk);
 +        cactus_init_shadow_write(dst, bytes, chunk);
          dst += chunk;
          bytes += chunk;
-@@ -7068,5 +7076,7 @@
+@@ -7068,5 +7077,7 @@
  	fbcon_stage53_progress("ST73 PID1 VM alloc OK");
      cactus_init_scratch_start = scratch_addr;
 -    cactus_init_scratch_size = map_page_size;
