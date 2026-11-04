@@ -1,0 +1,154 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -390,4 +390,46 @@
+ static void exec_port_actions_destroy(struct exec_port_actions *port_actions);
+ 
++#if defined(CACTUS)
++/* PID1's first scratch page is wired by Stage74. Read its physical alias to
++ * prepare the first exec image while early TTBR0 copyin remains unreliable. */
++extern ppnum_t pmap_find_phys(void *, uint64_t);
++extern vm_map_address_t phystokv(uint64_t);
++extern void fbcon_stage53_progress(const char *);
++static vm_map_address_t cactus_init_scratch_start;
++static vm_map_size_t cactus_init_scratch_size;
++static int cactus_init_read(void *dst, user_addr_t src, size_t n)
++{
++    proc_t proc = current_proc();
++    if (proc == PROC_NULL || proc_pid(proc) != 1 ||
++        cactus_init_scratch_start == 0 || src < cactus_init_scratch_start ||
++        src - cactus_init_scratch_start >= cactus_init_scratch_size ||
++        n > cactus_init_scratch_size - (src - cactus_init_scratch_start)) {
++        return copyin(src, dst, n);
++    }
++    uint8_t *output = dst;
++    while (n) {
++        ppnum_t ppn = pmap_find_phys(get_task_pmap(proc_task(proc)), src);
++        if (!ppn) return EFAULT;
++        vm_size_t offset = src & PAGE_MASK;
++        vm_size_t length = MIN(n, PAGE_SIZE - offset);
++        memcpy(output, (void *)(uintptr_t)(phystokv(ptoa(ppn)) + offset), length);
++        output += length;
++        src += length;
++        n -= length;
++    }
++    return 0;
++}
++static int cactus_init_readstr(user_addr_t src, char *dst, size_t limit, size_t *copied)
++{
++    for (size_t i = 0; i < limit; i++) {
++        int err = cactus_init_read(dst + i, src + i, 1);
++        if (err) { if (copied) *copied = i; return err; }
++        if (!dst[i]) { if (copied) *copied = i + 1; return 0; }
++    }
++    if (copied) *copied = limit;
++    return ENAMETOOLONG;
++}
++#endif
++
+ /*
+  * exec_add_user_string
+@@ -433,5 +475,9 @@
+ 			error = copystr(kstr, imgp->ip_strendp, space, &len);
+ 		} else {
+-			error = copyinstr(str, imgp->ip_strendp, space, &len);
++			#if defined(CACTUS)
++            error = cactus_init_readstr(str, imgp->ip_strendp, space, &len);
++#else
++            error = copyinstr(str, imgp->ip_strendp, space, &len);
++#endif
+ 		}
+ 
+@@ -502,5 +548,9 @@
+ 	case UIO_USERSPACE32:
+ 	case UIO_USERSPACE64:   /* Same for copyin()... */
+-		error = copyinstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
++		#if defined(CACTUS)
++            error = cactus_init_readstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
++#else
++            error = copyinstr(path, imgp->ip_strings + strlen(EXECUTABLE_KEY), len, &len);
++#endif
+ 		break;
+ 	case UIO_SYSSPACE:
+@@ -2154,5 +2204,8 @@
+ 	}
+ 
+-	error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
++	#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST75 PID1 path read");
++#endif
++    error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
+ 	if (error) {
+ 		goto bad_notrans;
+@@ -2168,5 +2221,8 @@
+ 
+ again:
+-	error = namei(ndp);
++	#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST75 PID1 namei");
++#endif
++    error = namei(ndp);
+ 	if (error) {
+ 		if (error == ERESTART) {
+@@ -2208,5 +2264,8 @@
+ 	}
+ 
+-	error = vn_rdwr(UIO_READ, imgp->ip_vp, imgp->ip_vdata, PAGE_SIZE, 0,
++	#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST75 PID1 header read");
++#endif
++    error = vn_rdwr(UIO_READ, imgp->ip_vp, imgp->ip_vdata, PAGE_SIZE, 0,
+ 	    UIO_SYSSPACE, IO_NODELOCKED,
+ 	    vfs_context_ucred(imgp->ip_vfs_context),
+@@ -4989,5 +5048,11 @@
+ 		 * the proc visible to the system.
+ 		 */
+-		imgp->ip_new_thread = cloneproc(old_task, NULL, p, CLONEPROC_FLAGS_FOR_EXEC);
++		#if defined(CACTUS)
++        if (proc_pid(p) == 1) fbcon_stage53_progress("ST75 PID1 clone enter");
++#endif
++        imgp->ip_new_thread = cloneproc(old_task, NULL, p, CLONEPROC_FLAGS_FOR_EXEC);
++#if defined(CACTUS)
++        if (proc_pid(p) == 1) fbcon_stage53_progress("ST75 PID1 clone returned");
++#endif
+ 		/* task and thread ref returned by cloneproc */
+ 		if (imgp->ip_new_thread == NULL) {
+@@ -5015,5 +5080,11 @@
+ 	 * as 0 and pretends the call succeeded.
+ 	 */
+-	error = exec_activate_image(imgp);
++	#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress("ST75 PID1 image activate");
++#endif
++    error = exec_activate_image(imgp);
++#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) fbcon_stage53_progress(error ? "ST75 PID1 image error" : "ST75 PID1 image activated");
++#endif
+ 	/* thread and task ref returned for vfexec case */
+ 
+@@ -5252,8 +5323,16 @@
+ 		unsigned int i = 0;
+ 
+-		error = copyin(froma, &i, 4);
++		#if defined(CACTUS)
++        error = cactus_init_read(&i, froma, 4);
++#else
++        error = copyin(froma, &i, 4);
++#endif
+ 		*toptr = CAST_USER_ADDR_T(i);   /* SAFE */
+ 	} else {
+-		error = copyin(froma, toptr, 8);
++		#if defined(CACTUS)
++        error = cactus_init_read(toptr, froma, 8);
++#else
++        error = copyin(froma, toptr, 8);
++#endif
+ 	}
+ 	return error;
+@@ -6988,4 +7067,6 @@
+ 	}
+ 	fbcon_stage53_progress("ST73 PID1 VM alloc OK");
++    cactus_init_scratch_start = scratch_addr;
++    cactus_init_scratch_size = map_page_size;
+ #else
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
