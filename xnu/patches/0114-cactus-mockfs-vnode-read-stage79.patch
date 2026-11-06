@@ -1,0 +1,154 @@
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -31,6 +31,11 @@
+ #include <sys/ubc.h>
+ #include <sys/mount_internal.h>
+ #include <sys/vnode_internal.h>
++#if defined(CACTUS)
++#include <sys/buf.h>
++#include <sys/uio.h>
++#include <sys/errno.h>
++#endif
+ #include <vfs/vfs_support.h>
+ 
+ #include <libkern/libkern.h>
+@@ -234,6 +239,67 @@
+  *
+  * Returns 0 on success, or an error.
+  */
++#if defined(CACTUS)
++/*
++ * The cactus md0 root is an IOKit virtual RAMDisk. It does not have a
++ * directly mappable physical memdev base (see patch 0024). Avoid UBC's
++ * cluster_read state machine for the first executable vnode read: that
++ * returned in Stage78 without completing the containing vn_rdwr().
++ *
++ * Mountroot already validated the same device with buf_meta_bread().
++ * Read bounded DEV_BSIZE units from that device and advance the caller's
++ * UIO exactly once per successful copy, including partial/EOF reads.
++ * Keep block-cache entries invalid so a later read never reuses stale
++ * root-device metadata.
++ */
++static int
++mockfs_cactus_devread(vnode_t vp, uio_t uio, off_t file_size)
++{
++    vnode_t dvp = vfs_devvp(vp->v_mount);
++    int error = 0;
++
++    if (dvp == NULL) {
++        return EIO;
++    }
++    while (uio_resid(uio) != 0) {
++        off_t pos = uio_offset(uio);
++        size_t inblock, amount;
++        buf_t bp = NULL;
++
++        if (pos < 0) {
++            error = EINVAL;
++            break;
++        }
++        if (pos >= file_size) {
++            break; /* EOF leaves residual unchanged for vn_rdwr. */
++        }
++        inblock = (size_t)(pos % DEV_BSIZE);
++        amount = DEV_BSIZE - inblock;
++        if ((off_t)amount > file_size - pos) {
++            amount = (size_t)(file_size - pos);
++        }
++        if (amount > (size_t)uio_resid(uio)) {
++            amount = (size_t)uio_resid(uio);
++        }
++        error = (int)buf_meta_bread(dvp, (daddr64_t)(pos / DEV_BSIZE),
++            DEV_BSIZE, NOCRED, &bp);
++        if (error == 0) {
++            error = uiomove((char *)buf_dataptr(bp) + inblock,
++                (int)amount, uio);
++        }
++        if (bp != NULL) {
++            buf_markinvalid(bp);
++            buf_brelse(bp);
++        }
++        if (error != 0) {
++            break;
++        }
++    }
++    vnode_put(dvp);
++    return error;
++}
++#endif /* CACTUS */
++
+ int
+ mockfs_read(struct vnop_read_args * ap)
+ {
+@@ -250,14 +316,21 @@
+ 	 */
+ 	if (vp->v_type == VREG) {
+ #if defined(CACTUS)
+-        extern void fbcon_stage53_progress(const char *);
+-        fbcon_stage53_progress("ST78 mockfs cluster enter");
+-#endif
+-		rvalue = cluster_read(vp, ap->a_uio, fsnode->size, ap->a_ioflag);
+-#if defined(CACTUS)
+-        fbcon_stage53_progress(rvalue ? "ST78 mockfs cluster ERROR" :
+-            "ST78 mockfs cluster returned");
+-#endif
++        mockfs_mount_t mockfs_mnt =
++            (mockfs_mount_t)fsnode->mnt->mnt_data;
++        if (!mockfs_mnt->mockfs_memory_backed) {
++            extern void fbcon_stage53_progress(const char *);
++            fbcon_stage53_progress("ST79 mockfs devread enter");
++            rvalue = mockfs_cactus_devread(vp, ap->a_uio, fsnode->size);
++            fbcon_stage53_progress(rvalue ? "ST79 mockfs devread ERROR" :
++                "ST79 mockfs devread finished");
++        } else
++#endif
++        {
++            /* Physical memdev has its own pre-mapped UBC pager. */
++            rvalue = cluster_read(vp, ap->a_uio, fsnode->size,
++                ap->a_ioflag);
++        }
+ 	} else {
+ 		/*
+ 		 * You've tried to read from a nonregular file; I hate you.
+@@ -369,7 +442,17 @@
+ 	 *   see a pagein in this case.
+ 	 */
+ 	if (mockfs_mnt->mockfs_memory_backed) {
++#if defined(CACTUS)
++        /*
++         * Physical memdev files already have fictitious UBC pages mapped
++         * at vnode creation. If a pager request still comes in, return a
++         * recoverable error rather than panicking the entire device.
++         * Cactus virtual RAMDisk uses cluster_pagein below.
++         */
++        return ENOTSUP;
++#else
+ 		panic("mockfs_pagein called for a memory-backed device");
++#endif
+ 	}
+ 
+ 	return cluster_pagein(ap->a_vp, ap->a_pl, ap->a_pl_offset, ap->a_f_offset, ap->a_size, fsnode->size, ap->a_flags);
+@@ -430,13 +513,21 @@
+ 	 *   This also means that their request should always be contiguous, so the run calculation is easy!
+ 	 */
+ 	if (vp->v_type == VREG) {
++#if defined(CACTUS)
++        if (blksize == 0 || foffset < 0 || foffset >= fsnode->size) {
++            return EINVAL;
++        }
++        *bpn = foffset / blksize;
++        *run = (size_t)(fsnode->size - foffset);
++        /* Partial final pages are legal; the cluster layer handles EOF. */
++#else
+ 		*bpn = foffset / blksize;
+ 		*run = fsnode->size - foffset;
+ 
+ 		if (ap->a_size > *run) {
+-			/* We've been asked for more data than the backing device can provide; we're done. */
+ 			panic("mockfs_blockmap was asked for a region that extended past the end of the backing device");
+ 		}
++#endif
+ 	} else {
+ 		rvalue = ENOTSUP;
+ 	}
