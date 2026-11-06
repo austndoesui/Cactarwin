@@ -1,0 +1,57 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -2295,15 +2295,32 @@
+     error = vn_rdwr(UIO_READ, imgp->ip_vp, imgp->ip_vdata, PAGE_SIZE, 0,
+ 	    UIO_SYSSPACE, IO_NODELOCKED,
+ 	    vfs_context_ucred(imgp->ip_vfs_context),
+ 	    &resid, vfs_context_proc(imgp->ip_vfs_context));
++#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1) {
++        char status[96];
++        unsigned int magic = 0;
++        if (!error && resid < PAGE_SIZE) {
++            memcpy(&magic, imgp->ip_vdata, sizeof(magic));
++        }
++        snprintf(status, sizeof(status),
++            "ST78 hdr err=%d rem=%llu magic=%08x", error,
++            (unsigned long long)resid, magic);
++        fbcon_stage53_progress(status);
++    }
++#endif
+ 	if (error) {
+ 		goto bad;
+ 	}
+ 
+ 	if (resid) {
+ 		memset(imgp->ip_vdata + (PAGE_SIZE - resid), 0x0, resid);
+ 	}
++#if defined(CACTUS)
++    if (proc_pid(current_proc()) == 1)
++        fbcon_stage53_progress("ST78 MachO activator enter");
++#endif
+ 
+ encapsulated_binary:
+ 	/* Limit the number of iterations we will attempt on each binary */
+ 	if (++itercount > EAI_ITERLIMIT) {
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -248,9 +248,17 @@
+ 	 * We're just an ugly frontend for the devnode, so we shouldn't need to do much for reads;
+ 	 *   pass the work to cluster_read.
+ 	 */
+ 	if (vp->v_type == VREG) {
++#if defined(CACTUS)
++        extern void fbcon_stage53_progress(const char *);
++        fbcon_stage53_progress("ST78 mockfs cluster enter");
++#endif
+ 		rvalue = cluster_read(vp, ap->a_uio, fsnode->size, ap->a_ioflag);
++#if defined(CACTUS)
++        fbcon_stage53_progress(rvalue ? "ST78 mockfs cluster ERROR" :
++            "ST78 mockfs cluster returned");
++#endif
+ 	} else {
+ 		/*
+ 		 * You've tried to read from a nonregular file; I hate you.
+ 		 */
